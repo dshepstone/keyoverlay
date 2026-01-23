@@ -1,0 +1,14 @@
+[workspace]
+members = [
+  "crates/core",
+  "crates/input",
+  "crates/overlay",
+  "crates/app",
+]
+resolver = "2"
+
+[workspace.package]
+edition = "2021"
+license = "MIT"
+rust-version = "1.74"
+repository = "https://github.com/your-org/keyoverlay"
