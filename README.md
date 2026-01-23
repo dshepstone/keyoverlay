@@ -37,6 +37,15 @@ cargo build
 cargo run -p keyoverlay-app
 ```
 
+## Running the overlay
+
+```bash
+cargo run -p keyoverlay-app
+```
+
+This opens a small always-on-top overlay window showing "KeyOverlay – overlay shell" and a list
+of recent key events.
+
 ## Contributing
 
 - Follow Rust 2021 edition conventions.

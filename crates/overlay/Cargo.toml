@@ -6,7 +6,10 @@ license = { workspace = true }
 rust-version = { workspace = true }
 
 [dependencies]
+anyhow = "1"
+eframe = "0.27"
 keyoverlay-core = { path = "../core" }
+keyoverlay-input = { path = "../input" }
 
 [lib]
 path = "src/lib.rs"
