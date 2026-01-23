@@ -1,17 +1,17 @@
 use windows::Win32::UI::Input::KeyboardAndMouse::{
-    VK_0, VK_1, VK_2, VK_3, VK_4, VK_5, VK_6, VK_7, VK_8, VK_9, VK_A, VK_B, VK_BACK, VK_C,
-    VK_CONTROL, VK_D, VK_DOWN, VK_E, VK_ESCAPE, VK_F, VK_G, VK_H, VK_I, VK_J, VK_K, VK_L,
-    VK_LEFT, VK_LWIN, VK_M, VK_MENU, VK_N, VK_O, VK_P, VK_Q, VK_R, VK_RETURN, VK_RIGHT,
-    VK_RWIN, VK_S, VK_SHIFT, VK_SPACE, VK_T, VK_TAB, VK_U, VK_UP, VK_V, VK_W, VK_X, VK_Y,
-    VK_Z,
+    VIRTUAL_KEY, VK_0, VK_1, VK_2, VK_3, VK_4, VK_5, VK_6, VK_7, VK_8, VK_9, VK_A, VK_B,
+    VK_BACK, VK_C, VK_CONTROL, VK_D, VK_DOWN, VK_E, VK_ESCAPE, VK_F, VK_G, VK_H, VK_I,
+    VK_J, VK_K, VK_L, VK_LEFT, VK_LWIN, VK_M, VK_MENU, VK_N, VK_O, VK_P, VK_Q, VK_R,
+    VK_RETURN, VK_RIGHT, VK_RWIN, VK_S, VK_SHIFT, VK_SPACE, VK_T, VK_TAB, VK_U, VK_UP,
+    VK_V, VK_W, VK_X, VK_Y, VK_Z,
 };
 
 use crate::Key;
 
 pub fn vk_to_key(vk_code: u32) -> Option<Key> {
-    let vk_code = vk_code as u16;
+    let vk = VIRTUAL_KEY(vk_code as u16);
 
-    let key = match vk_code {
+    let key = match vk {
         VK_A => Key::A,
         VK_B => Key::B,
         VK_C => Key::C,
