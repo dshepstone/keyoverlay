@@ -5,16 +5,17 @@ use std::time::SystemTime;
 
 use anyhow::{anyhow, Context, Result};
 use windows::core::PCWSTR;
-use windows::Win32::Foundation::{HWND, LPARAM, LRESULT, WPARAM};
+use windows::Win32::Foundation::{HINSTANCE, LPARAM, LRESULT, WPARAM};
 use windows::Win32::System::LibraryLoader::GetModuleHandleW;
 use windows::Win32::System::Threading::GetCurrentThreadId;
 use windows::Win32::UI::Input::KeyboardAndMouse::{
-    GetKeyState, KBDLLHOOKSTRUCT, VK_BACK, VK_CONTROL, VK_DOWN, VK_ESCAPE, VK_LEFT, VK_LWIN,
-    VK_MENU, VK_RIGHT, VK_RWIN, VK_RETURN, VK_SHIFT, VK_SPACE, VK_TAB, VK_UP, WH_KEYBOARD_LL,
+    GetKeyState, VK_BACK, VK_CONTROL, VK_DOWN, VK_ESCAPE, VK_LEFT, VK_LWIN, VK_MENU, VK_RIGHT,
+    VK_RWIN, VK_RETURN, VK_SHIFT, VK_SPACE, VK_TAB, VK_UP,
 };
 use windows::Win32::UI::WindowsAndMessaging::{
     CallNextHookEx, DispatchMessageW, GetMessageW, PostThreadMessageW, SetWindowsHookExW,
-    TranslateMessage, UnhookWindowsHookEx, HHOOK, MSG, WM_KEYDOWN, WM_QUIT, WM_SYSKEYDOWN,
+    TranslateMessage, UnhookWindowsHookEx, HHOOK, HC_ACTION, KBDLLHOOKSTRUCT, MSG, WH_KEYBOARD_LL,
+    WM_KEYDOWN, WM_QUIT, WM_SYSKEYDOWN,
 };
 
 static SENDER: OnceLock<Mutex<Option<Sender<KeyEvent>>>> = OnceLock::new();
@@ -92,10 +93,14 @@ fn setup_hook_thread(tx: Sender<KeyEvent>, ready_tx: Sender<Result<HookState>>) 
     let result = unsafe { GetModuleHandleW(PCWSTR::null()) }
         .context("failed to get module handle")
         .and_then(|module| {
-            let hook = unsafe { SetWindowsHookExW(WH_KEYBOARD_LL, Some(hook_proc), module, 0) };
-            if hook.0 == 0 {
-                return Err(anyhow!("SetWindowsHookExW failed"));
-            }
+            let hook = unsafe {
+                SetWindowsHookExW(
+                    WH_KEYBOARD_LL,
+                    Some(hook_proc),
+                    HINSTANCE(module.0),
+                    0,
+                )
+            }?;
 
             let _ = ready_tx.send(Ok(HookState { thread_id }));
             run_message_loop(hook);
@@ -115,7 +120,7 @@ fn setup_hook_thread(tx: Sender<KeyEvent>, ready_tx: Sender<Result<HookState>>) 
 fn run_message_loop(hook: HHOOK) {
     let mut message = MSG::default();
     unsafe {
-        while GetMessageW(&mut message, HWND(0), 0, 0).into() {
+        while GetMessageW(&mut message, None, 0, 0).into() {
             TranslateMessage(&message);
             DispatchMessageW(&message);
         }
@@ -125,7 +130,8 @@ fn run_message_loop(hook: HHOOK) {
 }
 
 extern "system" fn hook_proc(code: i32, wparam: WPARAM, lparam: LPARAM) -> LRESULT {
-    if code >= 0 && (wparam.0 as u32 == WM_KEYDOWN || wparam.0 as u32 == WM_SYSKEYDOWN) {
+    if code == HC_ACTION as i32 && (wparam.0 as u32 == WM_KEYDOWN || wparam.0 as u32 == WM_SYSKEYDOWN)
+    {
         let hook_data = unsafe { &*(lparam.0 as *const KBDLLHOOKSTRUCT) };
         let key_name = key_name_from_vk(hook_data.vkCode);
         let modifiers = Modifiers {
@@ -158,6 +164,7 @@ fn is_vk_down(vk: i32) -> bool {
 }
 
 fn key_name_from_vk(vk: u32) -> String {
+    let vk = vk as u16;
     match vk {
         0x30..=0x39 => ((b'0' + (vk as u8 - 0x30)) as char).to_string(),
         0x41..=0x5A => ((b'A' + (vk as u8 - 0x41)) as char).to_string(),
