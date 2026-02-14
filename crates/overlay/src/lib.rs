@@ -22,7 +22,8 @@ const OVERLAY_VIEWPORT_TITLE: &str = "KeyOverlayOverlay";
 fn ensure_windows_overlay_transparency() {
     use std::sync::atomic::{AtomicBool, Ordering};
 
-    use windows_sys::Win32::Graphics::Dwm::{DwmExtendFrameIntoClientArea, MARGINS};
+    use windows_sys::Win32::Graphics::Dwm::DwmExtendFrameIntoClientArea;
+    use windows_sys::Win32::UI::Controls::MARGINS;
     use windows_sys::Win32::UI::WindowsAndMessaging::{
         FindWindowW, GetWindowLongPtrW, SetLayeredWindowAttributes, SetWindowLongPtrW, GWL_EXSTYLE,
         LWA_ALPHA, WS_EX_LAYERED, WS_EX_TRANSPARENT,
@@ -39,7 +40,7 @@ fn ensure_windows_overlay_transparency() {
     // Fallback for Windows where compositor path can still produce an opaque backdrop:
     // force layered+per-pixel alpha on the overlay HWND only.
     let hwnd = unsafe { FindWindowW(std::ptr::null(), title_wide.as_ptr()) };
-    if hwnd == 0 {
+    if hwnd.is_null() {
         return;
     }
 
