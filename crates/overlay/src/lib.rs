@@ -235,7 +235,8 @@ pub fn run(rx: Receiver<InputEvent>, config: SharedConfig) -> Result<()> {
         viewport: egui::ViewportBuilder::default()
             .with_inner_size([520.0, 600.0])
             .with_resizable(true)
-            .with_min_inner_size([420.0, 400.0]),
+            .with_min_inner_size([420.0, 400.0])
+            .with_transparent(true),
         ..Default::default()
     };
 
