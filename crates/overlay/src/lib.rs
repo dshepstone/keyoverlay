@@ -2,7 +2,7 @@ use std::collections::VecDeque;
 use std::sync::mpsc::Receiver;
 use std::time::Duration;
 
-use anyhow::Result;
+use anyhow::{anyhow, Result};
 use eframe::egui;
 use keyoverlay_input::KeyEvent;
 
@@ -63,7 +63,7 @@ pub fn run(rx: Receiver<KeyEvent>) -> Result<()> {
         viewport: egui::ViewportBuilder::default()
             .with_inner_size([320.0, 200.0])
             .with_decorations(false)
-            .with_always_on_top(true)
+            .with_always_on_top()
             .with_resizable(false),
         ..Default::default()
     };
@@ -72,7 +72,6 @@ pub fn run(rx: Receiver<KeyEvent>) -> Result<()> {
         "KeyOverlay",
         options,
         Box::new(|_cc| Box::new(OverlayApp::new(rx))),
-    )?;
-
-    Ok(())
+    )
+    .map_err(|err| anyhow!(err.to_string()))
 }

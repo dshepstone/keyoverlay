@@ -46,6 +46,38 @@ cargo run -p keyoverlay-app
 This opens a small always-on-top overlay window showing "KeyOverlay – overlay shell" and a list
 of recent key events.
 
+## Next steps: test and verify it works
+
+Because this project is currently a scaffold plus a Phase 3 overlay shell, the best verification
+flow is:
+
+1. **Validate the workspace compiles and tests pass**
+
+   ```bash
+   cargo fmt --all --check
+   cargo clippy --workspace --all-targets -- -D warnings
+   cargo test --workspace
+   ```
+
+2. **Run the app binary**
+
+   ```bash
+   cargo run -p keyoverlay-app
+   ```
+
+3. **Confirm expected Phase 3 behavior**
+   - Terminal prints: `KeyOverlay – Phase 3 overlay shell`
+   - Overlay window appears and stays on top.
+   - The key list updates every ~750ms using sample input events.
+
+4. **If testing on non-Windows**
+   - You can still validate build, tests, and the sample-input overlay shell.
+   - Real global key capture is a later phase and Windows-specific.
+
+5. **If testing on Windows (recommended for upcoming phases)**
+   - Run from a normal user session (not headless/SSH).
+   - Keep this phase focused on window/render behavior; global hooks are not implemented yet.
+
 ## Contributing
 
 - Follow Rust 2021 edition conventions.
