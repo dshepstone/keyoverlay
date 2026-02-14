@@ -135,6 +135,10 @@ impl App {
 }
 
 impl eframe::App for App {
+    fn clear_color(&self, _visuals: &egui::Visuals) -> [f32; 4] {
+        egui::Color32::TRANSPARENT.to_normalized_gamma_f32()
+    }
+
     fn update(&mut self, ctx: &egui::Context, _frame: &mut eframe::Frame) {
         // Always drain input events (even when overlay is off, so the
         // channel doesn't fill up).
@@ -172,19 +176,19 @@ impl eframe::App for App {
                 move |ctx, _class| {
                     let bg_fill =
                         egui::Color32::from_rgba_unmultiplied(25, 25, 35, bg_alpha);
-                    let mut vis = egui::Visuals::dark();
-                    vis.panel_fill = bg_fill;
-                    vis.window_fill = bg_fill;
-                    ctx.set_visuals(vis);
+                    let overlay_size = egui::vec2(cfg.overlay_width, cfg.overlay_height);
 
-                    let frame = if bg_alpha == 0 {
-                        egui::Frame::none()
-                    } else {
-                        egui::Frame::none().fill(bg_fill).rounding(egui::Rounding::same(8.0))
-                    };
+                    if bg_alpha > 0 {
+                        let background_layer =
+                            egui::LayerId::new(egui::Order::Background, egui::Id::new("overlay-bg"));
+                        let bg_rect = egui::Rect::from_min_size(egui::Pos2::ZERO, overlay_size);
+                        ctx.layer_painter(background_layer)
+                            .rect_filled(bg_rect, egui::Rounding::same(8.0), bg_fill);
+                    }
 
-                    egui::CentralPanel::default()
-                        .frame(frame)
+                    egui::Area::new(egui::Id::new("overlay-content"))
+                        .fixed_pos(egui::Pos2::ZERO)
+                        .interactable(false)
                         .show(ctx, |ui| {
                             let now = Instant::now();
                             let d = cfg.display_duration_secs as f64;
@@ -192,6 +196,7 @@ impl eframe::App for App {
                             let rounding = cfg.pill_rounding;
                             let opacity = cfg.overlay_opacity;
 
+                            ui.set_min_size(overlay_size);
                             ui.horizontal(|ui| {
                                 if cfg.show_mouse_icon {
                                     let a = mouse_a * opacity;
