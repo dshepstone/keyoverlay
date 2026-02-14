@@ -136,6 +136,7 @@ impl App {
 
 impl eframe::App for App {
     fn clear_color(&self, _visuals: &egui::Visuals) -> [f32; 4] {
+        // Clear to alpha=0 so only explicitly painted widgets remain visible.
         egui::Color32::TRANSPARENT.to_normalized_gamma_f32()
     }
 
@@ -171,19 +172,23 @@ impl eframe::App for App {
                     .with_decorations(false)
                     .with_always_on_top()
                     .with_resizable(false)
-                    .with_transparent(true)
+                    .with_transparent(true) // Request per-pixel alpha for the overlay viewport.
                     .with_mouse_passthrough(true),
                 move |ctx, _class| {
-                    let bg_fill =
-                        egui::Color32::from_rgba_unmultiplied(25, 25, 35, bg_alpha);
+                    let bg_fill = egui::Color32::from_rgba_unmultiplied(25, 25, 35, bg_alpha);
                     let overlay_size = egui::vec2(cfg.overlay_width, cfg.overlay_height);
 
                     if bg_alpha > 0 {
-                        let background_layer =
-                            egui::LayerId::new(egui::Order::Background, egui::Id::new("overlay-bg"));
+                        let background_layer = egui::LayerId::new(
+                            egui::Order::Background,
+                            egui::Id::new("overlay-bg"),
+                        );
                         let bg_rect = egui::Rect::from_min_size(egui::Pos2::ZERO, overlay_size);
-                        ctx.layer_painter(background_layer)
-                            .rect_filled(bg_rect, egui::Rounding::same(8.0), bg_fill);
+                        ctx.layer_painter(background_layer).rect_filled(
+                            bg_rect,
+                            egui::Rounding::same(8.0),
+                            bg_fill,
+                        );
                     }
 
                     egui::Area::new(egui::Id::new("overlay-content"))
@@ -240,7 +245,10 @@ pub fn run(rx: Receiver<InputEvent>, config: SharedConfig) -> Result<()> {
         viewport: egui::ViewportBuilder::default()
             .with_inner_size([520.0, 600.0])
             .with_resizable(true)
-            .with_min_inner_size([420.0, 400.0]),
+            .with_min_inner_size([420.0, 400.0])
+            // Required for transparent child viewports on eframe's native backends.
+            // Without this, the renderer may composite with an opaque surface (black).
+            .with_transparent(true),
         ..Default::default()
     };
 
