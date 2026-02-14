@@ -22,8 +22,6 @@ const OVERLAY_VIEWPORT_TITLE: &str = "KeyOverlayOverlay";
 fn ensure_windows_overlay_transparency() {
     use std::sync::atomic::{AtomicBool, Ordering};
 
-    use windows_sys::Win32::Graphics::Dwm::DwmExtendFrameIntoClientArea;
-    use windows_sys::Win32::UI::Controls::MARGINS;
     use windows_sys::Win32::UI::WindowsAndMessaging::{
         FindWindowW, GetWindowLongPtrW, SetLayeredWindowAttributes, SetWindowLongPtrW, GWL_EXSTYLE,
         LWA_ALPHA, WS_EX_LAYERED, WS_EX_TRANSPARENT,
@@ -50,14 +48,7 @@ fn ensure_windows_overlay_transparency() {
         SetWindowLongPtrW(hwnd, GWL_EXSTYLE, layered_style as isize);
         SetLayeredWindowAttributes(hwnd, 0, 255, LWA_ALPHA);
 
-        // Extend the DWM frame to the whole client area to keep the window glass/transparent.
-        let margins = MARGINS {
-            cxLeftWidth: -1,
-            cxRightWidth: -1,
-            cyTopHeight: -1,
-            cyBottomHeight: -1,
-        };
-        let _ = DwmExtendFrameIntoClientArea(hwnd, &margins);
+        // Keep per-pixel alpha via layered style; avoids extra DWM API requirements.
     }
 
     APPLIED.store(true, Ordering::Relaxed);
