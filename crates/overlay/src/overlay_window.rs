@@ -1,32 +1,27 @@
-use std::collections::VecDeque;
-use std::sync::mpsc::Receiver;
-use std::time::{Duration, Instant};
+use std::time::Instant;
 
 use eframe::egui;
-use keyoverlay_core::{AppConfig, SharedConfig};
-use keyoverlay_input::{InputEvent, MouseButton};
 
-use crate::mouse_icon::{draw_mouse_icon, MouseHighlight};
 use crate::theme::{apply_alpha, Palette};
 
 // ── Display Event ────────────────────────────────────────────────────────
 
 #[derive(Clone)]
-struct DisplayEvent {
-    label: String,
-    kind: EventKind,
-    created: Instant,
+pub struct DisplayEvent {
+    pub label: String,
+    pub kind: EventKind,
+    pub created: Instant,
 }
 
 #[derive(Clone, Copy, PartialEq)]
-enum EventKind {
+pub enum EventKind {
     Key { has_modifiers: bool },
     Mouse,
     Scroll,
 }
 
 impl DisplayEvent {
-    fn opacity(&self, now: Instant, display_secs: f64, fade_secs: f64) -> f32 {
+    pub fn opacity(&self, now: Instant, display_secs: f64, fade_secs: f64) -> f32 {
         let lifetime = display_secs + fade_secs;
         let age = now.duration_since(self.created).as_secs_f64();
         if age < display_secs {
@@ -39,184 +34,14 @@ impl DisplayEvent {
         }
     }
 
-    fn is_expired(&self, now: Instant, display_secs: f64, fade_secs: f64) -> bool {
+    pub fn is_expired(&self, now: Instant, display_secs: f64, fade_secs: f64) -> bool {
         now.duration_since(self.created).as_secs_f64() > display_secs + fade_secs
-    }
-}
-
-// ── Overlay App ──────────────────────────────────────────────────────────
-
-pub struct OverlayApp {
-    rx: Receiver<InputEvent>,
-    config: SharedConfig,
-    events: VecDeque<DisplayEvent>,
-    last_mouse_btn: Option<(MouseButton, Instant)>,
-}
-
-impl OverlayApp {
-    pub fn new(rx: Receiver<InputEvent>, config: SharedConfig) -> Self {
-        Self {
-            rx,
-            config,
-            events: VecDeque::with_capacity(16),
-            last_mouse_btn: None,
-        }
-    }
-
-    fn push_event(&mut self, event: InputEvent, cfg: &AppConfig) {
-        // Filter by config toggles.
-        match &event {
-            InputEvent::Key(_) if !cfg.show_keyboard => return,
-            InputEvent::MouseClick(_) if !cfg.show_mouse_clicks => return,
-            InputEvent::Scroll(_) if !cfg.show_scroll => return,
-            _ => {}
-        }
-
-        if let InputEvent::MouseClick(mc) = &event {
-            self.last_mouse_btn = Some((mc.button, Instant::now()));
-        }
-
-        let (label, kind) = match &event {
-            InputEvent::Key(ke) => {
-                let has_mods = !ke.modifiers.is_empty();
-                (
-                    event.display_string(),
-                    EventKind::Key {
-                        has_modifiers: has_mods,
-                    },
-                )
-            }
-            InputEvent::MouseClick(_) => (event.display_string(), EventKind::Mouse),
-            InputEvent::Scroll(_) => (event.display_string(), EventKind::Scroll),
-        };
-
-        let max = cfg.max_visible_events;
-        while self.events.len() >= max {
-            self.events.pop_front();
-        }
-
-        self.events.push_back(DisplayEvent {
-            label,
-            kind,
-            created: Instant::now(),
-        });
-    }
-
-    fn prune_expired(&mut self, cfg: &AppConfig) {
-        let now = Instant::now();
-        let d = cfg.display_duration_secs as f64;
-        let f = cfg.fade_duration_secs as f64;
-        while self.events.front().is_some_and(|e| e.is_expired(now, d, f)) {
-            self.events.pop_front();
-        }
-    }
-
-    fn mouse_highlight(&self, cfg: &AppConfig) -> MouseHighlight {
-        if let Some((btn, t)) = self.last_mouse_btn {
-            let age = Instant::now().duration_since(t).as_secs_f64();
-            if age < (cfg.display_duration_secs + cfg.fade_duration_secs) as f64 {
-                return MouseHighlight::from_button(btn);
-            }
-        }
-        MouseHighlight::None
-    }
-
-    fn mouse_alpha(&self, cfg: &AppConfig) -> f32 {
-        if let Some((_btn, t)) = self.last_mouse_btn {
-            let age = Instant::now().duration_since(t).as_secs_f64();
-            let d = cfg.display_duration_secs as f64;
-            let f = cfg.fade_duration_secs as f64;
-            if age < d {
-                return 1.0;
-            } else if age < d + f {
-                return (1.0 - ((age - d) / f) as f32).max(0.0);
-            }
-        }
-        0.4 // dim when idle
-    }
-}
-
-impl eframe::App for OverlayApp {
-    fn clear_color(&self, _visuals: &egui::Visuals) -> [f32; 4] {
-        egui::Rgba::TRANSPARENT.to_array()
-    }
-
-    fn update(&mut self, ctx: &egui::Context, _frame: &mut eframe::Frame) {
-        let cfg = self.config.lock().unwrap().clone();
-
-        // Drain incoming events.
-        while let Ok(event) = self.rx.try_recv() {
-            self.push_event(event, &cfg);
-        }
-        self.prune_expired(&cfg);
-
-        let palette = Palette::from_config(&cfg);
-
-        // Fully transparent visuals — no panel background at all.
-        let mut visuals = egui::Visuals::dark();
-        visuals.panel_fill = egui::Color32::TRANSPARENT;
-        visuals.window_fill = egui::Color32::TRANSPARENT;
-        ctx.set_visuals(visuals);
-
-        let mut style = (*ctx.style()).clone();
-        style.text_styles.insert(
-            egui::TextStyle::Body,
-            egui::FontId::proportional(cfg.font_size),
-        );
-        ctx.set_style(style);
-
-        egui::CentralPanel::default()
-            .frame(egui::Frame::none())
-            .show(ctx, |ui| {
-                let now = Instant::now();
-                let d = cfg.display_duration_secs as f64;
-                let f = cfg.fade_duration_secs as f64;
-                let rounding = cfg.pill_rounding;
-                let opacity = cfg.overlay_opacity;
-
-                ui.horizontal(|ui| {
-                    // ── Mouse icon (left side) ──
-                    if cfg.show_mouse_icon {
-                        let hl = self.mouse_highlight(&cfg);
-                        let mouse_a = self.mouse_alpha(&cfg) * opacity;
-                        draw_mouse_icon(ui, hl, mouse_a, &palette);
-                        ui.add_space(12.0);
-                    }
-
-                    // ── Event pills ──
-                    ui.vertical(|ui| {
-                        if self.events.is_empty() {
-                            // Nothing to show when idle — fully transparent.
-                        } else {
-                            let events: Vec<_> = self.events.iter().rev().cloned().collect();
-                            for event in &events {
-                                let alpha = event.opacity(now, d, f) * opacity;
-                                if alpha <= 0.0 {
-                                    continue;
-                                }
-                                ui.add_space(2.0);
-                                draw_event_pill(
-                                    ui,
-                                    event,
-                                    alpha,
-                                    &palette,
-                                    rounding,
-                                    cfg.font_size,
-                                );
-                                ui.add_space(2.0);
-                            }
-                        }
-                    });
-                });
-            });
-
-        ctx.request_repaint_after(Duration::from_millis(16));
     }
 }
 
 // ── Pill Rendering ──────────────────────────────────────────────────────
 
-fn draw_event_pill(
+pub fn draw_event_pill(
     ui: &mut egui::Ui,
     event: &DisplayEvent,
     alpha: f32,

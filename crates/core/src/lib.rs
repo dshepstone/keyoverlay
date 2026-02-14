@@ -125,6 +125,9 @@ pub struct AppConfig {
     pub custom_scroll_bg: Color,
     pub custom_scroll_fg: Color,
 
+    // ── State ──
+    pub overlay_enabled: bool,
+
     // ── Behavior ──
     pub display_duration_secs: f32,
     pub fade_duration_secs: f32,
@@ -159,6 +162,8 @@ impl Default for AppConfig {
             custom_mouse_fg: Color::rgb(255, 255, 255),
             custom_scroll_bg: Color::rgb(80, 170, 120),
             custom_scroll_fg: Color::rgb(255, 255, 255),
+
+            overlay_enabled: true,
 
             display_duration_secs: 2.0,
             fade_duration_secs: 0.5,
