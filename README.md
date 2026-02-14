@@ -43,12 +43,16 @@ cargo run -p keyoverlay-app
 cargo run -p keyoverlay-app
 ```
 
-This opens a small always-on-top overlay window showing "KeyOverlay – overlay shell" and a list
-of recent key events.
+This opens the current UI shell with a control menu and presentation popups.
+
+Current scaffold behavior:
+- Left control panel for keyboard/mouse visibility toggles, popup X/Y placement, and popup timing/scale.
+- Center panel with recent event history.
+- Foreground popup stack showing keystrokes and mouse button activity (currently driven by sample events).
 
 ## Next steps: test and verify it works
 
-Because this project is currently a scaffold plus a Phase 3 overlay shell, the best verification
+Because this project is currently a scaffold plus a Phase 4 UI shell, the best verification
 flow is:
 
 1. **Validate the workspace compiles and tests pass**
@@ -65,10 +69,10 @@ flow is:
    cargo run -p keyoverlay-app
    ```
 
-3. **Confirm expected Phase 3 behavior**
-   - Terminal prints: `KeyOverlay – Phase 3 overlay shell`
+3. **Confirm expected Phase 4 behavior**
+   - Terminal prints: `KeyOverlay – Phase 4 UI shell`
    - Overlay window appears and stays on top.
-   - The key list updates every ~750ms using sample input events.
+   - The event history and foreground popup stack update using sample keyboard/mouse events.
 
 4. **If testing on non-Windows**
    - You can still validate build, tests, and the sample-input overlay shell.

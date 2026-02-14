@@ -153,6 +153,25 @@ impl fmt::Display for Modifiers {
 }
 
 #[derive(Debug, Copy, Clone, Eq, PartialEq, Hash)]
+pub enum MouseButton {
+    Left,
+    Right,
+    Middle,
+}
+
+impl fmt::Display for MouseButton {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        let label = match self {
+            MouseButton::Left => "MouseLeft",
+            MouseButton::Right => "MouseRight",
+            MouseButton::Middle => "MouseMiddle",
+        };
+
+        write!(f, "{label}")
+    }
+}
+
+#[derive(Debug, Copy, Clone, Eq, PartialEq, Hash)]
 pub struct KeyEvent {
     pub key: Key,
     pub modifiers: Modifiers,
@@ -168,20 +187,60 @@ impl KeyEvent {
         }
     }
 
-    pub fn with_timestamp(key: Key, modifiers: Modifiers, timestamp: Instant) -> Self {
-        Self {
-            key,
-            modifiers,
-            timestamp,
-        }
-    }
-
     pub fn display_string(&self) -> String {
         if self.modifiers.is_empty() {
             format!("{}", self.key)
         } else {
             format!("{}+{}", self.modifiers, self.key)
         }
+    }
+}
+
+#[derive(Debug, Copy, Clone, Eq, PartialEq, Hash)]
+pub struct MouseEvent {
+    pub button: MouseButton,
+    pub pressed: bool,
+    pub timestamp: Instant,
+}
+
+impl MouseEvent {
+    pub fn new(button: MouseButton, pressed: bool) -> Self {
+        Self {
+            button,
+            pressed,
+            timestamp: Instant::now(),
+        }
+    }
+
+    pub fn display_string(&self) -> String {
+        if self.pressed {
+            format!("{}", self.button)
+        } else {
+            format!("{}Up", self.button)
+        }
+    }
+}
+
+#[derive(Debug, Copy, Clone, Eq, PartialEq, Hash)]
+pub enum InputEvent {
+    Key(KeyEvent),
+    Mouse(MouseEvent),
+}
+
+impl InputEvent {
+    pub fn display_string(&self) -> String {
+        match self {
+            InputEvent::Key(event) => event.display_string(),
+            InputEvent::Mouse(event) => event.display_string(),
+        }
+    }
+
+    pub fn is_keyboard(&self) -> bool {
+        matches!(self, InputEvent::Key(_))
+    }
+
+    pub fn is_mouse(&self) -> bool {
+        matches!(self, InputEvent::Mouse(_))
     }
 }
 
