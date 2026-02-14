@@ -16,6 +16,55 @@ use mouse_icon::{draw_mouse_icon, MouseHighlight};
 use overlay_window::{draw_event_pill, DisplayEvent, EventKind};
 use theme::Palette;
 
+const OVERLAY_VIEWPORT_TITLE: &str = "KeyOverlayOverlay";
+
+#[cfg(target_os = "windows")]
+fn ensure_windows_overlay_transparency() {
+    use std::sync::atomic::{AtomicBool, Ordering};
+
+    use windows_sys::Win32::Graphics::Dwm::{DwmExtendFrameIntoClientArea, MARGINS};
+    use windows_sys::Win32::UI::WindowsAndMessaging::{
+        FindWindowW, GetWindowLongPtrW, SetLayeredWindowAttributes, SetWindowLongPtrW, GWL_EXSTYLE,
+        LWA_ALPHA, WS_EX_LAYERED, WS_EX_TRANSPARENT,
+    };
+
+    static APPLIED: AtomicBool = AtomicBool::new(false);
+    if APPLIED.load(Ordering::Relaxed) {
+        return;
+    }
+
+    let mut title_wide: Vec<u16> = OVERLAY_VIEWPORT_TITLE.encode_utf16().collect();
+    title_wide.push(0);
+
+    // Fallback for Windows where compositor path can still produce an opaque backdrop:
+    // force layered+per-pixel alpha on the overlay HWND only.
+    let hwnd = unsafe { FindWindowW(std::ptr::null(), title_wide.as_ptr()) };
+    if hwnd == 0 {
+        return;
+    }
+
+    unsafe {
+        let ex_style = GetWindowLongPtrW(hwnd, GWL_EXSTYLE) as u32;
+        let layered_style = ex_style | WS_EX_LAYERED | WS_EX_TRANSPARENT;
+        SetWindowLongPtrW(hwnd, GWL_EXSTYLE, layered_style as isize);
+        SetLayeredWindowAttributes(hwnd, 0, 255, LWA_ALPHA);
+
+        // Extend the DWM frame to the whole client area to keep the window glass/transparent.
+        let margins = MARGINS {
+            cxLeftWidth: -1,
+            cxRightWidth: -1,
+            cyTopHeight: -1,
+            cyBottomHeight: -1,
+        };
+        let _ = DwmExtendFrameIntoClientArea(hwnd, &margins);
+    }
+
+    APPLIED.store(true, Ordering::Relaxed);
+}
+
+#[cfg(not(target_os = "windows"))]
+fn ensure_windows_overlay_transparency() {}
+
 // ── Combined App ────────────────────────────────────────────────────────
 // Single eframe application: settings is the main window, overlay is a
 // child viewport shown/hidden via the on/off toggle.
@@ -167,12 +216,15 @@ impl eframe::App for App {
                 egui::ViewportId::from_hash_of("overlay"),
                 egui::ViewportBuilder::default()
                     .with_inner_size([cfg.overlay_width, cfg.overlay_height])
+                    .with_title(OVERLAY_VIEWPORT_TITLE)
                     .with_decorations(false)
                     .with_always_on_top()
                     .with_resizable(false)
                     .with_transparent(true) // Request per-pixel alpha for the overlay viewport.
                     .with_mouse_passthrough(true),
                 move |ctx, _class| {
+                    ensure_windows_overlay_transparency();
+
                     let overlay_size = egui::vec2(cfg.overlay_width, cfg.overlay_height);
 
                     egui::CentralPanel::default()
