@@ -3,22 +3,21 @@ use std::thread;
 use std::time::Duration;
 
 use anyhow::Result;
-use keyoverlay_input::{InputEvent, Key, KeyEvent, Modifiers, MouseButton, MouseEvent};
+use keyoverlay_input::{InputEvent, Key, Modifiers, MouseButton};
 
 fn spawn_sample_input(tx: mpsc::Sender<InputEvent>) {
     thread::spawn(move || {
         let samples = [
-            InputEvent::Key(KeyEvent::new(Key::A, Modifiers::empty())),
-            InputEvent::Key(KeyEvent::new(Key::V, Modifiers::CTRL)),
-            InputEvent::Mouse(MouseEvent::new(MouseButton::Left, true)),
-            InputEvent::Mouse(MouseEvent::new(MouseButton::Right, true)),
-            InputEvent::Key(KeyEvent::new(Key::ArrowLeft, Modifiers::SHIFT)),
-            InputEvent::Key(KeyEvent::new(
-                Key::Enter,
-                Modifiers::CTRL | Modifiers::SHIFT,
-            )),
-            InputEvent::Mouse(MouseEvent::new(MouseButton::Middle, true)),
-            InputEvent::Key(KeyEvent::new(Key::Space, Modifiers::ALT | Modifiers::WIN)),
+            InputEvent::key_down(Key::Ctrl, Modifiers::CTRL),
+            InputEvent::key_down(Key::V, Modifiers::CTRL),
+            InputEvent::key_up(Key::V),
+            InputEvent::key_up(Key::Ctrl),
+            InputEvent::mouse_down(MouseButton::Left),
+            InputEvent::mouse_up(MouseButton::Left),
+            InputEvent::key_down(Key::Shift, Modifiers::SHIFT),
+            InputEvent::key_down(Key::ArrowLeft, Modifiers::SHIFT),
+            InputEvent::key_up(Key::ArrowLeft),
+            InputEvent::key_up(Key::Shift),
         ];
 
         let mut index = 0usize;
@@ -28,13 +27,13 @@ fn spawn_sample_input(tx: mpsc::Sender<InputEvent>) {
                 break;
             }
             index += 1;
-            thread::sleep(Duration::from_millis(550));
+            thread::sleep(Duration::from_millis(240));
         }
     });
 }
 
 fn main() -> Result<()> {
-    println!("KeyOverlay – Phase 4 UI shell");
+    println!("KeyOverlay – live overlay + controls scaffold");
 
     let (tx, rx) = mpsc::channel();
     spawn_sample_input(tx);

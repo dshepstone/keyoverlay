@@ -1,9 +1,8 @@
 use std::fmt;
-use std::time::Instant;
 
 use bitflags::bitflags;
 
-#[derive(Debug, Copy, Clone, Eq, PartialEq, Hash)]
+#[derive(Debug, Copy, Clone, Eq, PartialEq, Hash, Ord, PartialOrd)]
 pub enum Key {
     A,
     B,
@@ -124,35 +123,7 @@ bitflags! {
     }
 }
 
-impl fmt::Display for Modifiers {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        if self.is_empty() {
-            return Ok(());
-        }
-
-        let mut first = true;
-        let parts = [
-            (Modifiers::CTRL, "Ctrl"),
-            (Modifiers::SHIFT, "Shift"),
-            (Modifiers::ALT, "Alt"),
-            (Modifiers::WIN, "Win"),
-        ];
-
-        for (flag, label) in parts {
-            if self.contains(flag) {
-                if !first {
-                    write!(f, "+")?;
-                }
-                first = false;
-                write!(f, "{label}")?;
-            }
-        }
-
-        Ok(())
-    }
-}
-
-#[derive(Debug, Copy, Clone, Eq, PartialEq, Hash)]
+#[derive(Debug, Copy, Clone, Eq, PartialEq, Hash, Ord, PartialOrd)]
 pub enum MouseButton {
     Left,
     Right,
@@ -172,75 +143,28 @@ impl fmt::Display for MouseButton {
 }
 
 #[derive(Debug, Copy, Clone, Eq, PartialEq, Hash)]
-pub struct KeyEvent {
-    pub key: Key,
-    pub modifiers: Modifiers,
-    pub timestamp: Instant,
-}
-
-impl KeyEvent {
-    pub fn new(key: Key, modifiers: Modifiers) -> Self {
-        Self {
-            key,
-            modifiers,
-            timestamp: Instant::now(),
-        }
-    }
-
-    pub fn display_string(&self) -> String {
-        if self.modifiers.is_empty() {
-            format!("{}", self.key)
-        } else {
-            format!("{}+{}", self.modifiers, self.key)
-        }
-    }
-}
-
-#[derive(Debug, Copy, Clone, Eq, PartialEq, Hash)]
-pub struct MouseEvent {
-    pub button: MouseButton,
-    pub pressed: bool,
-    pub timestamp: Instant,
-}
-
-impl MouseEvent {
-    pub fn new(button: MouseButton, pressed: bool) -> Self {
-        Self {
-            button,
-            pressed,
-            timestamp: Instant::now(),
-        }
-    }
-
-    pub fn display_string(&self) -> String {
-        if self.pressed {
-            format!("{}", self.button)
-        } else {
-            format!("{}Up", self.button)
-        }
-    }
-}
-
-#[derive(Debug, Copy, Clone, Eq, PartialEq, Hash)]
 pub enum InputEvent {
-    Key(KeyEvent),
-    Mouse(MouseEvent),
+    KeyDown { key: Key, modifiers: Modifiers },
+    KeyUp { key: Key },
+    MouseDown { button: MouseButton },
+    MouseUp { button: MouseButton },
 }
 
 impl InputEvent {
-    pub fn display_string(&self) -> String {
-        match self {
-            InputEvent::Key(event) => event.display_string(),
-            InputEvent::Mouse(event) => event.display_string(),
-        }
+    pub fn key_down(key: Key, modifiers: Modifiers) -> Self {
+        Self::KeyDown { key, modifiers }
     }
 
-    pub fn is_keyboard(&self) -> bool {
-        matches!(self, InputEvent::Key(_))
+    pub fn key_up(key: Key) -> Self {
+        Self::KeyUp { key }
     }
 
-    pub fn is_mouse(&self) -> bool {
-        matches!(self, InputEvent::Mouse(_))
+    pub fn mouse_down(button: MouseButton) -> Self {
+        Self::MouseDown { button }
+    }
+
+    pub fn mouse_up(button: MouseButton) -> Self {
+        Self::MouseUp { button }
     }
 }
 

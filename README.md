@@ -46,9 +46,9 @@ cargo run -p keyoverlay-app
 This opens the current UI shell with a control menu and presentation popups.
 
 Current scaffold behavior:
-- Left control panel for keyboard/mouse visibility toggles, popup X/Y placement, and popup timing/scale.
-- Center panel with recent event history.
-- Foreground popup stack showing keystrokes and mouse button activity (currently driven by sample events).
+- Control window for keyboard/mouse filters, popup X/Y placement, visible seconds, scale, and click-through behavior.
+- Separate transparent overlay viewport (floating, borderless, always-on-top) that renders keycaps.
+- Live pressed-state display (held keys/buttons only) with fade-out after `visible_seconds`.
 
 ## Next steps: test and verify it works
 
@@ -70,9 +70,9 @@ flow is:
    ```
 
 3. **Confirm expected Phase 4 behavior**
-   - Terminal prints: `KeyOverlay – Phase 4 UI shell`
+   - Terminal prints: `KeyOverlay – live overlay + controls scaffold`
    - Overlay window appears and stays on top.
-   - The event history and foreground popup stack update using sample keyboard/mouse events.
+   - The overlay keycaps update based on held sample inputs and fade out when nothing is pressed.
 
 4. **If testing on non-Windows**
    - You can still validate build, tests, and the sample-input overlay shell.
