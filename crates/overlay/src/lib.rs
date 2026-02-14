@@ -163,8 +163,6 @@ impl eframe::App for App {
             let events: Vec<DisplayEvent> = self.events.iter().rev().cloned().collect();
             let mouse_hl = self.mouse_highlight();
             let mouse_a = self.mouse_alpha();
-            let bg_alpha = (cfg.background_opacity * 255.0) as u8;
-
             ctx.show_viewport_immediate(
                 egui::ViewportId::from_hash_of("overlay"),
                 egui::ViewportBuilder::default()
@@ -175,25 +173,11 @@ impl eframe::App for App {
                     .with_transparent(true) // Request per-pixel alpha for the overlay viewport.
                     .with_mouse_passthrough(true),
                 move |ctx, _class| {
-                    let bg_fill = egui::Color32::from_rgba_unmultiplied(25, 25, 35, bg_alpha);
                     let overlay_size = egui::vec2(cfg.overlay_width, cfg.overlay_height);
 
-                    if bg_alpha > 0 {
-                        let background_layer = egui::LayerId::new(
-                            egui::Order::Background,
-                            egui::Id::new("overlay-bg"),
-                        );
-                        let bg_rect = egui::Rect::from_min_size(egui::Pos2::ZERO, overlay_size);
-                        ctx.layer_painter(background_layer).rect_filled(
-                            bg_rect,
-                            egui::Rounding::same(8.0),
-                            bg_fill,
-                        );
-                    }
-
-                    egui::Area::new(egui::Id::new("overlay-content"))
-                        .fixed_pos(egui::Pos2::ZERO)
-                        .interactable(false)
+                    egui::CentralPanel::default()
+                        // Keep the overlay viewport fully transparent outside explicit widgets.
+                        .frame(egui::Frame::none().fill(egui::Color32::TRANSPARENT))
                         .show(ctx, |ui| {
                             let now = Instant::now();
                             let d = cfg.display_duration_secs as f64;
