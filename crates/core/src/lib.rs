@@ -113,6 +113,7 @@ pub struct AppConfig {
     pub theme: Theme,
     pub font_size: f32,
     pub overlay_opacity: f32,
+    pub background_opacity: f32,
     pub pill_rounding: f32,
 
     // Custom theme colors (used when theme == Custom).
@@ -152,6 +153,7 @@ impl Default for AppConfig {
             theme: Theme::Dark,
             font_size: 18.0,
             overlay_opacity: 1.0,
+            background_opacity: 0.0,
             pill_rounding: 8.0,
 
             custom_key_bg: Color::rgb(55, 55, 75),
@@ -177,8 +179,8 @@ impl Default for AppConfig {
             layout: OverlayLayout::Vertical,
             margin_x: 40.0,
             margin_y: 60.0,
-            overlay_width: 360.0,
-            overlay_height: 280.0,
+            overlay_width: 280.0,
+            overlay_height: 200.0,
         }
     }
 }

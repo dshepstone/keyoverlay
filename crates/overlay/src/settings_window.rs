@@ -213,8 +213,13 @@ fn tab_appearance(app: &mut App, ui: &mut egui::Ui) {
     });
 
     ui.horizontal(|ui| {
-        ui.label("Overlay opacity:");
+        ui.label("Content opacity:");
         ui.add(egui::Slider::new(&mut app.draft.overlay_opacity, 0.1..=1.0));
+    });
+
+    ui.horizontal(|ui| {
+        ui.label("Background opacity:");
+        ui.add(egui::Slider::new(&mut app.draft.background_opacity, 0.0..=1.0));
     });
 
     ui.horizontal(|ui| {

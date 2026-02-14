@@ -158,6 +158,7 @@ impl eframe::App for App {
             let events: Vec<DisplayEvent> = self.events.iter().rev().cloned().collect();
             let mouse_hl = self.mouse_highlight();
             let mouse_a = self.mouse_alpha();
+            let bg_alpha = (cfg.background_opacity * 255.0) as u8;
 
             ctx.show_viewport_immediate(
                 egui::ViewportId::from_hash_of("overlay"),
@@ -169,13 +170,21 @@ impl eframe::App for App {
                     .with_transparent(true)
                     .with_mouse_passthrough(true),
                 move |ctx, _class| {
+                    let bg_fill =
+                        egui::Color32::from_rgba_unmultiplied(25, 25, 35, bg_alpha);
                     let mut vis = egui::Visuals::dark();
-                    vis.panel_fill = egui::Color32::TRANSPARENT;
-                    vis.window_fill = egui::Color32::TRANSPARENT;
+                    vis.panel_fill = bg_fill;
+                    vis.window_fill = bg_fill;
                     ctx.set_visuals(vis);
 
+                    let frame = if bg_alpha == 0 {
+                        egui::Frame::none()
+                    } else {
+                        egui::Frame::none().fill(bg_fill).rounding(egui::Rounding::same(8.0))
+                    };
+
                     egui::CentralPanel::default()
-                        .frame(egui::Frame::none())
+                        .frame(frame)
                         .show(ctx, |ui| {
                             let now = Instant::now();
                             let d = cfg.display_duration_secs as f64;
