@@ -3,16 +3,21 @@ use std::thread;
 use std::time::Duration;
 
 use anyhow::Result;
-use keyoverlay_input::{Key, KeyEvent, Modifiers};
+use keyoverlay_input::{InputEvent, Key, Modifiers, MouseButton};
 
-fn spawn_sample_input(tx: mpsc::Sender<KeyEvent>) {
+fn spawn_sample_input(tx: mpsc::Sender<InputEvent>) {
     thread::spawn(move || {
         let samples = [
-            KeyEvent::new(Key::A, Modifiers::empty()),
-            KeyEvent::new(Key::V, Modifiers::CTRL),
-            KeyEvent::new(Key::ArrowLeft, Modifiers::SHIFT),
-            KeyEvent::new(Key::Enter, Modifiers::CTRL | Modifiers::SHIFT),
-            KeyEvent::new(Key::Space, Modifiers::ALT | Modifiers::WIN),
+            InputEvent::key_down(Key::Ctrl, Modifiers::CTRL),
+            InputEvent::key_down(Key::V, Modifiers::CTRL),
+            InputEvent::key_up(Key::V),
+            InputEvent::key_up(Key::Ctrl),
+            InputEvent::mouse_down(MouseButton::Left),
+            InputEvent::mouse_up(MouseButton::Left),
+            InputEvent::key_down(Key::Shift, Modifiers::SHIFT),
+            InputEvent::key_down(Key::ArrowLeft, Modifiers::SHIFT),
+            InputEvent::key_up(Key::ArrowLeft),
+            InputEvent::key_up(Key::Shift),
         ];
 
         let mut index = 0usize;
@@ -22,13 +27,13 @@ fn spawn_sample_input(tx: mpsc::Sender<KeyEvent>) {
                 break;
             }
             index += 1;
-            thread::sleep(Duration::from_millis(750));
+            thread::sleep(Duration::from_millis(240));
         }
     });
 }
 
 fn main() -> Result<()> {
-    println!("KeyOverlay – Phase 3 overlay shell");
+    println!("KeyOverlay – live overlay + controls scaffold");
 
     let (tx, rx) = mpsc::channel();
     spawn_sample_input(tx);

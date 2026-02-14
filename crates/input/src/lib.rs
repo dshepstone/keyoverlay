@@ -1,9 +1,8 @@
 use std::fmt;
-use std::time::Instant;
 
 use bitflags::bitflags;
 
-#[derive(Debug, Copy, Clone, Eq, PartialEq, Hash)]
+#[derive(Debug, Copy, Clone, Eq, PartialEq, Hash, Ord, PartialOrd)]
 pub enum Key {
     A,
     B,
@@ -124,64 +123,48 @@ bitflags! {
     }
 }
 
-impl fmt::Display for Modifiers {
+#[derive(Debug, Copy, Clone, Eq, PartialEq, Hash, Ord, PartialOrd)]
+pub enum MouseButton {
+    Left,
+    Right,
+    Middle,
+}
+
+impl fmt::Display for MouseButton {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        if self.is_empty() {
-            return Ok(());
-        }
+        let label = match self {
+            MouseButton::Left => "MouseLeft",
+            MouseButton::Right => "MouseRight",
+            MouseButton::Middle => "MouseMiddle",
+        };
 
-        let mut first = true;
-        let parts = [
-            (Modifiers::CTRL, "Ctrl"),
-            (Modifiers::SHIFT, "Shift"),
-            (Modifiers::ALT, "Alt"),
-            (Modifiers::WIN, "Win"),
-        ];
-
-        for (flag, label) in parts {
-            if self.contains(flag) {
-                if !first {
-                    write!(f, "+")?;
-                }
-                first = false;
-                write!(f, "{label}")?;
-            }
-        }
-
-        Ok(())
+        write!(f, "{label}")
     }
 }
 
 #[derive(Debug, Copy, Clone, Eq, PartialEq, Hash)]
-pub struct KeyEvent {
-    pub key: Key,
-    pub modifiers: Modifiers,
-    pub timestamp: Instant,
+pub enum InputEvent {
+    KeyDown { key: Key, modifiers: Modifiers },
+    KeyUp { key: Key },
+    MouseDown { button: MouseButton },
+    MouseUp { button: MouseButton },
 }
 
-impl KeyEvent {
-    pub fn new(key: Key, modifiers: Modifiers) -> Self {
-        Self {
-            key,
-            modifiers,
-            timestamp: Instant::now(),
-        }
+impl InputEvent {
+    pub fn key_down(key: Key, modifiers: Modifiers) -> Self {
+        Self::KeyDown { key, modifiers }
     }
 
-    pub fn with_timestamp(key: Key, modifiers: Modifiers, timestamp: Instant) -> Self {
-        Self {
-            key,
-            modifiers,
-            timestamp,
-        }
+    pub fn key_up(key: Key) -> Self {
+        Self::KeyUp { key }
     }
 
-    pub fn display_string(&self) -> String {
-        if self.modifiers.is_empty() {
-            format!("{}", self.key)
-        } else {
-            format!("{}+{}", self.modifiers, self.key)
-        }
+    pub fn mouse_down(button: MouseButton) -> Self {
+        Self::MouseDown { button }
+    }
+
+    pub fn mouse_up(button: MouseButton) -> Self {
+        Self::MouseUp { button }
     }
 }
 
