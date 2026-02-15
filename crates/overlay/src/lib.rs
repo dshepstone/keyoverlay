@@ -270,6 +270,7 @@ struct App {
     /// Fixed size established at activation, used for the entire visible period
     /// to prevent position drift when tray content changes width.
     fixed_size: Option<[f32; 2]>,
+    last_live_origin: Option<egui::Pos2>,
 }
 
 impl App {
@@ -292,6 +293,7 @@ impl App {
             fixed_origin: None,
             was_overlay_visible: false,
             fixed_size: None,
+            last_live_origin: None,
         }
     }
 
@@ -519,9 +521,18 @@ impl eframe::App for App {
     }
 
     fn update(&mut self, ctx: &egui::Context, _frame: &mut eframe::Frame) {
-        let mut had_input_event = false;
+        let mut should_lock_positioning_mode = false;
         while let Ok(event) = self.rx.try_recv() {
-            had_input_event = true;
+            let is_lock_event = matches!(
+                event,
+                InputEvent::KeyDown(_)
+                    | InputEvent::MouseDown(_)
+                    | InputEvent::MouseUp(_)
+                    | InputEvent::MouseWheel(_)
+            );
+            if self.draft.positioning_mode && is_lock_event {
+                should_lock_positioning_mode = true;
+            }
             self.input_state.apply_event(event);
         }
 
@@ -535,7 +546,8 @@ impl eframe::App for App {
         settings_window::draw_settings(ctx, self);
 
         if self.draft.overlay_enabled {
-            if self.draft.positioning_mode && had_input_event {
+            let was_positioning_mode = self.draft.positioning_mode;
+            if should_lock_positioning_mode {
                 self.draft.positioning_mode = false;
                 self.apply();
             }
@@ -577,6 +589,7 @@ impl eframe::App for App {
                 self.last_region_geometry = None;
                 self.fixed_origin = None;
                 self.fixed_size = None;
+                self.last_live_origin = None;
                 self.was_overlay_visible = false;
             } else {
                 let palette = Palette::from_config(&self.draft);
@@ -590,16 +603,24 @@ impl eframe::App for App {
                 );
 
                 let is_activation = !self.was_overlay_visible;
+                let just_locked = was_positioning_mode && !self.draft.positioning_mode;
                 let (win_pos, win_size) = if self.draft.positioning_mode {
                     self.fixed_origin = None;
                     self.fixed_size = None;
                     let size = [geometry.width_points, geometry.height_points];
                     let pos = self.compute_overlay_position(size, self.screen_size);
+                    self.last_live_origin = Some(pos);
                     (pos, size)
                 } else {
-                    if is_activation {
+                    if is_activation || just_locked {
                         let size = [geometry.width_points, geometry.height_points];
-                        let pos = self.compute_overlay_position(size, self.screen_size);
+                        let pos = if just_locked {
+                            self.last_live_origin.unwrap_or_else(|| {
+                                self.compute_overlay_position(size, self.screen_size)
+                            })
+                        } else {
+                            self.compute_overlay_position(size, self.screen_size)
+                        };
                         self.fixed_origin = Some(pos);
                         self.fixed_size = Some(size);
                     }
@@ -611,7 +632,7 @@ impl eframe::App for App {
                     egui::ViewportCommand::InnerSize(egui::vec2(win_size[0], win_size[1])),
                 );
 
-                if self.draft.positioning_mode || is_activation {
+                if self.draft.positioning_mode || is_activation || just_locked {
                     ctx.send_viewport_cmd_to(
                         overlay_id,
                         egui::ViewportCommand::OuterPosition(win_pos),
