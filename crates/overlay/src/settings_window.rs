@@ -1,6 +1,7 @@
 use eframe::egui;
 use keyoverlay_core::{OverlayLayout, OverlayPosition, Theme};
 
+
 use crate::theme::{c2e, e2c};
 use crate::App;
 
@@ -291,6 +292,24 @@ fn tab_position(app: &mut App, ui: &mut egui::Ui) {
 
     ui.add_space(8.0);
 
+    // Show X / Y sliders when Manual positioning is selected.
+    if app.draft.position == OverlayPosition::Manual {
+        ui.add_space(4.0);
+        section_heading(ui, "Manual Position");
+
+        ui.horizontal(|ui| {
+            ui.label("X position:");
+            ui.add(egui::Slider::new(&mut app.draft.overlay_x, 0.0..=3840.0).suffix(" px"));
+        });
+
+        ui.horizontal(|ui| {
+            ui.label("Y position:");
+            ui.add(egui::Slider::new(&mut app.draft.overlay_y, 0.0..=2160.0).suffix(" px"));
+        });
+
+        ui.add_space(4.0);
+    }
+
     ui.horizontal(|ui| {
         ui.label("Layout direction:");
         for layout in OverlayLayout::ALL {
@@ -309,19 +328,6 @@ fn tab_position(app: &mut App, ui: &mut egui::Ui) {
     ui.horizontal(|ui| {
         ui.label("Vertical margin:");
         ui.add(egui::Slider::new(&mut app.draft.margin_y, 0.0..=200.0).suffix(" px"));
-    });
-
-    ui.add_space(12.0);
-    section_heading(ui, "Overlay Size");
-
-    ui.horizontal(|ui| {
-        ui.label("Width:");
-        ui.add(egui::Slider::new(&mut app.draft.overlay_width, 200.0..=800.0).suffix(" px"));
-    });
-
-    ui.horizontal(|ui| {
-        ui.label("Height:");
-        ui.add(egui::Slider::new(&mut app.draft.overlay_height, 100.0..=600.0).suffix(" px"));
     });
 }
 
