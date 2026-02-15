@@ -351,7 +351,6 @@ pub fn run(rx: Receiver<InputEvent>, config: SharedConfig) -> Result<()> {
             .with_resizable(true)
             .with_min_inner_size([420.0, 400.0])
             .with_transparent(true),
-        renderer: eframe::Renderer::Wgpu,
         ..Default::default()
     };
 
