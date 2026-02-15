@@ -13,7 +13,7 @@ use anyhow::Result;
 use eframe::egui;
 use eframe::epaint::Rgba;
 use keyoverlay_core::{AppConfig, OverlayPosition, SharedConfig};
-use keyoverlay_input::{InputEvent, Key, MouseButton, ScrollDirection};
+use keyoverlay_input::{InputEvent, Key, Modifiers, MouseButton, ScrollDirection};
 use mouse_icon::{draw_mouse_icon, MouseHighlight, ScrollArrowDirection};
 
 use win_region::{
@@ -110,8 +110,23 @@ impl InputState {
         match event {
             InputEvent::Key(e) => {
                 self.pressed_keys.clear();
+                if e.modifiers.contains(Modifiers::CTRL) {
+                    self.pressed_keys.insert(Key::Ctrl);
+                }
+                if e.modifiers.contains(Modifiers::SHIFT) {
+                    self.pressed_keys.insert(Key::Shift);
+                }
+                if e.modifiers.contains(Modifiers::ALT) {
+                    self.pressed_keys.insert(Key::Alt);
+                }
+                if e.modifiers.contains(Modifiers::WIN) {
+                    self.pressed_keys.insert(Key::Win);
+                }
+                self.pressed_keys.insert(e.key);
                 self.key_sequence_started_at = now;
-                self.display_chord = Some(e.display_string());
+                self.display_chord = self
+                    .chord_from_pressed_keys()
+                    .or_else(|| Some(e.display_string()));
             }
             InputEvent::MouseClick(e) => {
                 self.pressed_mouse_buttons.clear();
@@ -141,13 +156,15 @@ impl InputState {
         }
     }
 
-    fn tick(&mut self, now: Instant, mouse_hold_for: Duration) {
+    fn tick(&mut self, now: Instant, mouse_hold_for: Duration, keyboard_hold_for: Duration) {
         if !self.mouse_icon_visible(now, mouse_hold_for) {
             self.last_mouse_highlight = MouseHighlight::None;
             self.scroll_highlight = None;
         }
 
-        self.pressed_keys.clear();
+        if now.duration_since(self.key_sequence_started_at) >= keyboard_hold_for {
+            self.pressed_keys.clear();
+        }
         self.pressed_mouse_buttons.clear();
     }
 
@@ -614,7 +631,7 @@ impl eframe::App for App {
                 || self.draft.show_scroll
                 || self.draft.show_mouse_icon;
 
-            self.input_state.tick(now, mouse_hold_for);
+            self.input_state.tick(now, mouse_hold_for, overlay_hold_for);
 
             let mut overlay_visible = self.input_state.overlay_visible(
                 now,
