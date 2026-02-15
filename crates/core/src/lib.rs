@@ -190,13 +190,13 @@ impl Default for AppConfig {
 
             overlay_enabled: true,
 
-            display_duration_secs: 2.0,
+            display_duration_secs: 0.5,
             fade_duration_secs: 0.5,
             max_visible_events: 8,
             show_keyboard: true,
             show_mouse_clicks: true,
             show_mouse_icon: true,
-            show_mouse_event_text: true,
+            show_mouse_event_text: false,
             show_scroll: true,
 
             position: OverlayPosition::TopRight,

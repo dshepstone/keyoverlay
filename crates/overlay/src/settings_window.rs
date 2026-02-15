@@ -250,7 +250,15 @@ fn tab_appearance(app: &mut App, ui: &mut egui::Ui) {
 }
 
 fn tab_behavior(app: &mut App, ui: &mut egui::Ui) {
-    section_heading(ui, "Display");
+    ui.horizontal(|ui| {
+        section_heading(ui, "Display");
+
+        ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+            if ui.button("Reset to default settings").clicked() {
+                app.reset_defaults();
+            }
+        });
+    });
 
     ui.horizontal(|ui| {
         ui.label("Display duration:");
