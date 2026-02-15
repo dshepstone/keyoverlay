@@ -14,6 +14,7 @@ use eframe::epaint::Rgba;
 use keyoverlay_core::{AppConfig, OverlayPosition, SharedConfig};
 use keyoverlay_input::{InputEvent, Key, MouseButton};
 
+use crate::theme::apply_alpha;
 use win_region::{apply_test_region, apply_tray_region, PillRect};
 
 const OVERLAY_VIEWPORT_TITLE: &str = "KeyOverlayOverlay";
