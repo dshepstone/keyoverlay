@@ -14,7 +14,7 @@ use eframe::epaint::Rgba;
 use keyoverlay_core::{AppConfig, OverlayPosition, SharedConfig};
 use keyoverlay_input::{InputEvent, Key, MouseButton};
 
-use win_region::{apply_test_region, apply_tray_region, PillRect};
+use win_region::{apply_tray_region, PillRect};
 
 const OVERLAY_VIEWPORT_TITLE: &str = "KeyOverlayOverlay";
 const OVERLAY_IDLE_HIDE_MS: u64 = 700;
@@ -227,8 +227,9 @@ struct App {
     input_state: InputState,
     screen_size: [f32; 2],
     last_region_geometry: Option<OverlayGeometry>,
-    region_test_applied: bool,
     last_hwnd: Option<isize>,
+    fixed_origin: Option<egui::Pos2>,
+    was_overlay_visible: bool,
 }
 
 impl App {
@@ -247,8 +248,9 @@ impl App {
             input_state: InputState::new(),
             screen_size: [1920.0, 1080.0],
             last_region_geometry: None,
-            region_test_applied: false,
             last_hwnd: None,
+            fixed_origin: None,
+            was_overlay_visible: false,
         }
     }
 
@@ -402,13 +404,7 @@ impl App {
         let width = geometry.width_px;
         let height = geometry.height_px;
 
-        let hwnd = if !self.region_test_applied {
-            let hwnd = apply_test_region(OVERLAY_VIEWPORT_TITLE);
-            self.region_test_applied = true;
-            hwnd
-        } else {
-            apply_tray_region(OVERLAY_VIEWPORT_TITLE, width, height, TRAY_RADIUS)
-        };
+        let hwnd = apply_tray_region(OVERLAY_VIEWPORT_TITLE, width, height, TRAY_RADIUS);
 
         if let Some(hwnd_val) = hwnd {
             if let Some(last) = self.last_hwnd {
@@ -474,6 +470,8 @@ impl eframe::App for App {
                 // so no window is created/shown at all.
                 ctx.send_viewport_cmd_to(overlay_id, egui::ViewportCommand::Visible(false));
                 self.last_region_geometry = None;
+                self.fixed_origin = None;
+                self.was_overlay_visible = false;
             } else {
                 let _cfg = self.draft.clone();
                 let geometry = self.build_overlay_geometry(
@@ -483,10 +481,16 @@ impl eframe::App for App {
                     visible_mouse_label,
                 );
 
-                let win_pos = self.compute_overlay_position(
-                    [geometry.width_points, geometry.height_points],
-                    self.screen_size,
-                );
+                // On Hidden → Visible transition, compute and lock the origin.
+                let is_activation = !self.was_overlay_visible;
+                if is_activation {
+                    let pos = self.compute_overlay_position(
+                        [geometry.width_points, geometry.height_points],
+                        self.screen_size,
+                    );
+                    self.fixed_origin = Some(pos);
+                }
+                let win_pos = self.fixed_origin.unwrap();
 
                 ctx.send_viewport_cmd_to(
                     overlay_id,
@@ -495,10 +499,21 @@ impl eframe::App for App {
                         geometry.height_points,
                     )),
                 );
-                ctx.send_viewport_cmd_to(overlay_id, egui::ViewportCommand::OuterPosition(win_pos));
-                // Resize/reposition first, then apply region in window-local coordinates.
+
+                // Only reposition on the activation frame; while visible
+                // the top-left origin stays locked.
+                if is_activation {
+                    ctx.send_viewport_cmd_to(
+                        overlay_id,
+                        egui::ViewportCommand::OuterPosition(win_pos),
+                    );
+                }
+
+                // Apply rounded region before showing.
                 self.maybe_apply_window_region(&geometry);
                 ctx.send_viewport_cmd_to(overlay_id, egui::ViewportCommand::Visible(true));
+
+                self.was_overlay_visible = true;
 
                 ctx.show_viewport_immediate(
                     overlay_id,
