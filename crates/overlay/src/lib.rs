@@ -24,9 +24,11 @@ const GAP_BETWEEN_PILLS: i32 = 10;
 const TRAY_PAD_X: i32 = 22;
 const TRAY_PAD_Y: i32 = 18;
 const TRAY_RADIUS: i32 = 22;
-const PILL_PAD_X: i32 = 18;
-const PILL_PAD_Y: i32 = 12;
-const PILL_RADIUS: i32 = 16;
+const PILL_PAD_X: i32 = 24;
+const PILL_PAD_Y: i32 = 16;
+const PILL_MIN_H: i32 = 46;
+const PILL_MIN_W: i32 = 88;
+const PILL_RADIUS: i32 = 18;
 
 fn ensure_windows_overlay_transparency() {}
 
@@ -36,7 +38,9 @@ struct InputState {
     pressed_mouse_buttons: HashSet<MouseButton>,
     last_any_activity: Instant,
     last_mouse_activity: Instant,
-    last_mouse_event_label: Option<String>,
+    mouse_icon_active: bool,
+    mouse_label: Option<String>,
+    pending_left_press_at: Option<Instant>,
 }
 
 impl InputState {
@@ -47,12 +51,31 @@ impl InputState {
             pressed_mouse_buttons: HashSet::new(),
             last_any_activity: now,
             last_mouse_activity: now,
-            last_mouse_event_label: None,
+            mouse_icon_active: false,
+            mouse_label: None,
+            pending_left_press_at: None,
         }
     }
 
     fn apply_event(&mut self, event: InputEvent) {
         let now = event.timestamp();
+
+        if mouse_debug_enabled() {
+            match &event {
+                InputEvent::MouseDown(e) => {
+                    eprintln!("[mouse-debug] down button={} t={now:?}", e.button)
+                }
+                InputEvent::MouseUp(e) => {
+                    eprintln!("[mouse-debug] up button={} t={now:?}", e.button)
+                }
+                InputEvent::MouseWheel(e) => {
+                    eprintln!("[mouse-debug] wheel dir={} t={now:?}", e.direction)
+                }
+                InputEvent::MouseMove(_) => eprintln!("[mouse-debug] move t={now:?}"),
+                _ => {}
+            }
+        }
+
         match event {
             InputEvent::KeyDown(e) => {
                 self.pressed_keys.insert(e.key);
@@ -66,21 +89,50 @@ impl InputState {
                 self.pressed_mouse_buttons.insert(e.button);
                 self.last_any_activity = now;
                 self.last_mouse_activity = now;
-                self.last_mouse_event_label = Some(format!("{}", e.button));
+                self.mouse_icon_active = true;
+
+                if e.button == MouseButton::Left {
+                    self.pending_left_press_at = Some(now);
+                } else {
+                    self.mouse_label = Some(format!("{} Click", e.button));
+                }
             }
             InputEvent::MouseUp(e) => {
                 self.pressed_mouse_buttons.remove(&e.button);
                 self.last_any_activity = now;
                 self.last_mouse_activity = now;
+                self.mouse_icon_active = true;
+
+                if e.button == MouseButton::Left {
+                    if let Some(press_at) = self.pending_left_press_at {
+                        if now.duration_since(press_at) <= Duration::from_millis(250) {
+                            self.mouse_label = Some("Left Click".to_string());
+                        }
+                    }
+                    self.pending_left_press_at = None;
+                } else {
+                    self.mouse_label = Some(format!("{} Click", e.button));
+                }
             }
-            InputEvent::MouseWheel(e) => {
+            InputEvent::MouseWheel(_) => {
                 self.last_any_activity = now;
                 self.last_mouse_activity = now;
-                self.last_mouse_event_label = Some(format!("{}", e.direction));
+                self.mouse_icon_active = true;
+                self.mouse_label = Some("Scroll".to_string());
             }
             InputEvent::MouseMove(_) => {
                 self.last_any_activity = now;
                 self.last_mouse_activity = now;
+                self.mouse_icon_active = true;
+            }
+        }
+    }
+
+    fn tick(&mut self, now: Instant) {
+        if let Some(press_at) = self.pending_left_press_at {
+            if now.duration_since(press_at) > Duration::from_millis(250) {
+                self.pending_left_press_at = None;
+                self.pressed_mouse_buttons.remove(&MouseButton::Left);
             }
         }
     }
@@ -92,16 +144,16 @@ impl InputState {
         now.duration_since(self.last_any_activity) < Duration::from_millis(OVERLAY_IDLE_HIDE_MS)
     }
 
-    fn mouse_visible(&self, now: Instant) -> bool {
-        if !self.pressed_mouse_buttons.is_empty() {
-            return true;
+    fn mouse_icon_visible(&self, now: Instant) -> bool {
+        if !self.mouse_icon_active {
+            return false;
         }
         now.duration_since(self.last_mouse_activity)
             < Duration::from_millis(MOUSE_ICON_IDLE_HIDE_MS)
     }
 
-    fn mouse_event_visible(&self, now: Instant) -> bool {
-        self.last_mouse_event_label.is_some() && self.mouse_visible(now)
+    fn mouse_label_visible(&self, now: Instant) -> bool {
+        self.mouse_label.is_some() && self.mouse_icon_visible(now)
     }
 
     fn current_chord(&self) -> Option<String> {
@@ -140,11 +192,17 @@ struct OverlayGeometry {
     height_points: f32,
     pill_rects: Vec<PillRect>,
     pill_labels: Vec<String>,
+    pill_font_sizes: Vec<f32>,
 }
 
 fn region_debug_bounds_enabled() -> bool {
     static ENABLED: OnceLock<bool> = OnceLock::new();
     *ENABLED.get_or_init(|| env::var("REGION_DEBUG_BOUNDS").is_ok_and(|v| v == "1"))
+}
+
+fn mouse_debug_enabled() -> bool {
+    static ENABLED: OnceLock<bool> = OnceLock::new();
+    *ENABLED.get_or_init(|| env::var("MOUSE_DEBUG").is_ok_and(|v| v == "1"))
 }
 
 fn paint_rect_stroke_inside(
@@ -249,25 +307,28 @@ impl App {
         &self,
         ctx: &egui::Context,
         chord: Option<&str>,
-        _mouse_visible: bool,
-        mouse_event_label: Option<&str>,
+        mouse_icon_visible: bool,
+        mouse_label: Option<&str>,
     ) -> OverlayGeometry {
         let px_scale: f32 = ctx.pixels_per_point();
         let chord_font: f32 = self.draft.font_size + LARGE_KEY_FONT_BOOST;
         let event_font: f32 = self.draft.font_size + 4.0;
 
         let mut labels: Vec<(String, f32)> = Vec::new();
+        if mouse_icon_visible {
+            labels.push(("🖱".to_owned(), event_font));
+        }
         if let Some(chord) = chord {
             labels.extend(chord.split(" + ").map(|part| (part.to_owned(), chord_font)));
         }
-        if labels.is_empty() {
-            if let Some(label) = mouse_event_label {
-                labels.push((label.to_owned(), event_font));
-            }
+        if let Some(label) = mouse_label {
+            labels.push((label.to_owned(), event_font));
         }
 
-        let mut pill_rects = Vec::with_capacity(labels.len());
-        let mut pill_labels = Vec::with_capacity(labels.len());
+        let pill_count = labels.len();
+        let mut pill_rects = Vec::with_capacity(pill_count);
+        let mut pill_labels = Vec::with_capacity(pill_count);
+        let mut pill_font_sizes = Vec::with_capacity(pill_count);
         let mut x_px = 0;
         let mut content_h_px = 0;
 
@@ -275,8 +336,8 @@ impl App {
             let text_size = Self::measure_text(ctx, &label, font_points);
             let text_w_px = (text_size.x * px_scale).round() as i32;
             let text_h_px = (text_size.y * px_scale).round() as i32;
-            let pill_w = (text_w_px + PILL_PAD_X * 2).max(1);
-            let pill_h = (text_h_px + PILL_PAD_Y * 2).max(1);
+            let pill_w = (text_w_px + PILL_PAD_X * 2).max(PILL_MIN_W);
+            let pill_h = (text_h_px + PILL_PAD_Y * 2).max(PILL_MIN_H);
 
             pill_rects.push(PillRect {
                 x: x_px,
@@ -286,9 +347,10 @@ impl App {
                 radius: PILL_RADIUS,
             });
             pill_labels.push(label);
+            pill_font_sizes.push(font_points);
 
             x_px += pill_w;
-            if idx + 1 < pill_rects.capacity() {
+            if idx + 1 < pill_count {
                 x_px += GAP_BETWEEN_PILLS;
             }
             content_h_px = content_h_px.max(pill_h);
@@ -304,6 +366,7 @@ impl App {
                 height_points: height_px as f32 / px_scale,
                 pill_rects,
                 pill_labels,
+                pill_font_sizes,
             };
         }
 
@@ -325,6 +388,7 @@ impl App {
             height_points: tray_h as f32 / px_scale,
             pill_rects,
             pill_labels,
+            pill_font_sizes,
         }
     }
 
@@ -378,22 +442,25 @@ impl eframe::App for App {
 
         if self.draft.overlay_enabled {
             let now = Instant::now();
+            self.input_state.tick(now);
+
             let overlay_visible = self.input_state.overlay_visible(now);
-            let mouse_visible = self.draft.show_mouse_icon && self.input_state.mouse_visible(now);
-            let mouse_event_visible = self.input_state.mouse_event_visible(now);
+            let mouse_icon_visible =
+                self.draft.show_mouse_icon && self.input_state.mouse_icon_visible(now);
+            let mouse_label_visible = self.input_state.mouse_label_visible(now);
             let chord = self.input_state.current_chord();
-            let mouse_event_label = self.input_state.last_mouse_event_label.clone();
+            let mouse_label = self.input_state.mouse_label.clone();
 
             let cfg = self.draft.clone();
-            let visible_mouse_label = if mouse_event_visible {
-                mouse_event_label.as_deref()
+            let visible_mouse_label = if mouse_label_visible {
+                mouse_label.as_deref()
             } else {
                 None
             };
             let geometry = self.build_overlay_geometry(
                 ctx,
                 chord.as_deref(),
-                mouse_visible,
+                mouse_icon_visible,
                 visible_mouse_label,
             );
 
@@ -494,8 +561,11 @@ impl eframe::App for App {
                             let pill_fill = egui::Color32::from_rgb(122, 71, 255);
                             let pill_text = egui::Color32::WHITE;
 
-                            for (rect, label) in
-                                geometry.pill_rects.iter().zip(geometry.pill_labels.iter())
+                            for ((rect, label), font_size) in geometry
+                                .pill_rects
+                                .iter()
+                                .zip(geometry.pill_labels.iter())
+                                .zip(geometry.pill_font_sizes.iter())
                             {
                                 let pill_rect = egui::Rect::from_min_size(
                                     egui::pos2(rect.x as f32 / px_scale, rect.y as f32 / px_scale),
@@ -507,9 +577,7 @@ impl eframe::App for App {
                                     pill_rect.center(),
                                     egui::Align2::CENTER_CENTER,
                                     label,
-                                    egui::FontId::proportional(
-                                        cfg.font_size + LARGE_KEY_FONT_BOOST,
-                                    ),
+                                    egui::FontId::proportional(*font_size),
                                     pill_text,
                                 );
                             }
