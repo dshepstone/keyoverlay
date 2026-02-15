@@ -18,43 +18,12 @@ use theme::Palette;
 
 const OVERLAY_VIEWPORT_TITLE: &str = "KeyOverlayOverlay";
 
-#[cfg(target_os = "windows")]
-fn ensure_windows_overlay_transparency() {
-    use std::sync::atomic::{AtomicBool, Ordering};
-
-    use windows_sys::Win32::UI::WindowsAndMessaging::{
-        FindWindowW, GetWindowLongPtrW, SetLayeredWindowAttributes, SetWindowLongPtrW, GWL_EXSTYLE,
-        LWA_ALPHA, WS_EX_LAYERED, WS_EX_TRANSPARENT,
-    };
-
-    static APPLIED: AtomicBool = AtomicBool::new(false);
-    if APPLIED.load(Ordering::Relaxed) {
-        return;
-    }
-
-    let mut title_wide: Vec<u16> = OVERLAY_VIEWPORT_TITLE.encode_utf16().collect();
-    title_wide.push(0);
-
-    // Fallback for Windows where compositor path can still produce an opaque backdrop:
-    // force layered+per-pixel alpha on the overlay HWND only.
-    let hwnd = unsafe { FindWindowW(std::ptr::null(), title_wide.as_ptr()) };
-    if hwnd.is_null() {
-        return;
-    }
-
-    unsafe {
-        let ex_style = GetWindowLongPtrW(hwnd, GWL_EXSTYLE) as u32;
-        let layered_style = ex_style | WS_EX_LAYERED | WS_EX_TRANSPARENT;
-        SetWindowLongPtrW(hwnd, GWL_EXSTYLE, layered_style as isize);
-        SetLayeredWindowAttributes(hwnd, 0, 255, LWA_ALPHA);
-
-        // Keep per-pixel alpha via layered style; avoids extra DWM API requirements.
-    }
-
-    APPLIED.store(true, Ordering::Relaxed);
-}
-
-#[cfg(not(target_os = "windows"))]
+// On Windows the overlay transparency is handled entirely by eframe's
+// `.with_transparent(true)` and `.with_mouse_passthrough(true)`.
+// Previous attempts to manually apply WS_EX_LAYERED + WS_EX_TRANSPARENT
+// via Win32 APIs conflicted with eframe's own compositing and caused the
+// window to be invisible on the desktop (only visible in the taskbar
+// preview).  We intentionally leave this as a no-op now.
 fn ensure_windows_overlay_transparency() {}
 
 // ── Combined App ────────────────────────────────────────────────────────
@@ -72,6 +41,9 @@ struct App {
     rx: Receiver<InputEvent>,
     events: VecDeque<DisplayEvent>,
     last_mouse_btn: Option<(MouseButton, Instant)>,
+
+    /// Detected screen size (updated each frame from the main window context).
+    screen_size: [f32; 2],
 }
 
 impl App {
@@ -85,6 +57,7 @@ impl App {
             rx,
             events: VecDeque::with_capacity(16),
             last_mouse_btn: None,
+            screen_size: [1920.0, 1080.0],
         }
     }
 
@@ -159,30 +132,28 @@ impl App {
         MouseHighlight::None
     }
 
-    /// Compute the overlay window position based on config.
-    fn compute_overlay_position(&self, win_size: [f32; 2]) -> egui::Pos2 {
+    /// Compute the overlay window position based on config and actual screen size.
+    fn compute_overlay_position(&self, win_size: [f32; 2], screen: [f32; 2]) -> egui::Pos2 {
         let cfg = &self.draft;
         if cfg.position == OverlayPosition::Manual {
             return egui::pos2(cfg.overlay_x, cfg.overlay_y);
         }
 
-        // Approximate screen size; egui doesn't easily expose monitor info from
-        // outside a viewport, so we use a sensible default.
-        let screen_w: f32 = 1920.0;
-        let screen_h: f32 = 1080.0;
+        let sw = screen[0];
+        let sh = screen[1];
         let w = win_size[0];
         let h = win_size[1];
         let mx = cfg.margin_x;
         let my = cfg.margin_y;
 
         match cfg.position {
-            OverlayPosition::BottomCenter => egui::pos2((screen_w - w) / 2.0, screen_h - h - my),
-            OverlayPosition::BottomLeft => egui::pos2(mx, screen_h - h - my),
-            OverlayPosition::BottomRight => egui::pos2(screen_w - w - mx, screen_h - h - my),
-            OverlayPosition::TopCenter => egui::pos2((screen_w - w) / 2.0, my),
+            OverlayPosition::BottomCenter => egui::pos2((sw - w) / 2.0, sh - h - my),
+            OverlayPosition::BottomLeft => egui::pos2(mx, sh - h - my),
+            OverlayPosition::BottomRight => egui::pos2(sw - w - mx, sh - h - my),
+            OverlayPosition::TopCenter => egui::pos2((sw - w) / 2.0, my),
             OverlayPosition::TopLeft => egui::pos2(mx, my),
-            OverlayPosition::TopRight => egui::pos2(screen_w - w - mx, my),
-            OverlayPosition::Center => egui::pos2((screen_w - w) / 2.0, (screen_h - h) / 2.0),
+            OverlayPosition::TopRight => egui::pos2(sw - w - mx, my),
+            OverlayPosition::Center => egui::pos2((sw - w) / 2.0, (sh - h) / 2.0),
             OverlayPosition::Manual => egui::pos2(cfg.overlay_x, cfg.overlay_y),
         }
     }
@@ -224,6 +195,12 @@ impl eframe::App for App {
         // Keep live config in sync (overlay reads from draft directly).
         *self.config.lock().unwrap() = self.draft.clone();
 
+        // ── Detect screen size from the main window ──
+        let screen_rect = ctx.input(|i| i.screen_rect());
+        if screen_rect.width() > 100.0 && screen_rect.height() > 100.0 {
+            self.screen_size = [screen_rect.width(), screen_rect.height()];
+        }
+
         // ── Render settings (main window) ──
         settings_window::draw_settings(ctx, self);
 
@@ -239,7 +216,7 @@ impl eframe::App for App {
 
             let win_w = cfg.overlay_width;
             let win_h = cfg.overlay_height;
-            let win_pos = self.compute_overlay_position([win_w, win_h]);
+            let win_pos = self.compute_overlay_position([win_w, win_h], self.screen_size);
 
             ctx.show_viewport_immediate(
                 egui::ViewportId::from_hash_of("overlay"),

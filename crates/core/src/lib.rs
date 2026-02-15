@@ -192,7 +192,7 @@ impl Default for AppConfig {
             show_mouse_icon: true,
             show_scroll: true,
 
-            position: OverlayPosition::BottomCenter,
+            position: OverlayPosition::TopRight,
             layout: OverlayLayout::Vertical,
             margin_x: 40.0,
             margin_y: 60.0,
