@@ -280,21 +280,25 @@ impl fmt::Display for ScrollDirection {
 
 #[derive(Debug, Clone)]
 pub enum InputEvent {
-    KeyDown(KeyEvent),
-    KeyUp(KeyEvent),
-    MouseDown(MouseButtonEvent),
-    MouseUp(MouseButtonEvent),
-    MouseWheel(ScrollEvent),
-    MouseMove(MouseMoveEvent),
+    Key(KeyEvent),
+    MouseClick(MouseClickEvent),
+    Scroll(ScrollEvent),
 }
 
 impl InputEvent {
     pub fn timestamp(&self) -> Instant {
         match self {
-            InputEvent::KeyDown(e) | InputEvent::KeyUp(e) => e.timestamp,
-            InputEvent::MouseDown(e) | InputEvent::MouseUp(e) => e.timestamp,
-            InputEvent::MouseWheel(e) => e.timestamp,
-            InputEvent::MouseMove(e) => e.timestamp,
+            InputEvent::Key(e) => e.timestamp,
+            InputEvent::MouseClick(e) => e.timestamp,
+            InputEvent::Scroll(e) => e.timestamp,
+        }
+    }
+
+    pub fn display_string(&self) -> String {
+        match self {
+            InputEvent::Key(e) => e.display_string(),
+            InputEvent::MouseClick(e) => format!("{}", e.button),
+            InputEvent::Scroll(e) => format!("{}", e.direction),
         }
     }
 }
@@ -334,37 +338,18 @@ impl KeyEvent {
     }
 }
 
-// ── Mouse Button Event ───────────────────────────────────────────────────
+// ── Mouse Click Event ────────────────────────────────────────────────────
 
 #[derive(Debug, Copy, Clone, Eq, PartialEq, Hash)]
-pub struct MouseButtonEvent {
+pub struct MouseClickEvent {
     pub button: MouseButton,
     pub timestamp: Instant,
 }
 
-impl MouseButtonEvent {
+impl MouseClickEvent {
     pub fn new(button: MouseButton) -> Self {
         Self {
             button,
-            timestamp: Instant::now(),
-        }
-    }
-}
-
-// ── Mouse Move Event ─────────────────────────────────────────────────────
-
-#[derive(Debug, Copy, Clone)]
-pub struct MouseMoveEvent {
-    pub x: f64,
-    pub y: f64,
-    pub timestamp: Instant,
-}
-
-impl MouseMoveEvent {
-    pub fn new(x: f64, y: f64) -> Self {
-        Self {
-            x,
-            y,
             timestamp: Instant::now(),
         }
     }
@@ -535,127 +520,79 @@ impl ModifierState {
     }
 }
 
-/// Build the rdev callback that converts raw events into `InputEvent`s
-/// and sends them over the provided channel.
-fn make_listener_callback(
-    tx: mpsc::Sender<InputEvent>,
-) -> impl FnMut(rdev::Event) + 'static {
-    use rdev::EventType;
-    use std::time::Duration;
-
-    let mut state = ModifierState::default();
-    let mut last_move_sent = Instant::now();
-    // Throttle mouse‐move events to at most one every 50 ms.
-    let move_throttle = Duration::from_millis(50);
-
-    move |event: rdev::Event| {
-        match event.event_type {
-            EventType::KeyPress(rkey) => {
-                if let Some(key) = rdev_key_to_key(rkey) {
-                    if is_modifier_key(key) {
-                        state.press(key);
-                    }
-                    let modifiers = state.as_modifiers();
-                    let ke = KeyEvent::new(key, modifiers);
-                    let _ = tx.send(InputEvent::KeyDown(ke));
-                }
-            }
-            EventType::KeyRelease(rkey) => {
-                if let Some(key) = rdev_key_to_key(rkey) {
-                    let modifiers = state.as_modifiers();
-                    let ke = KeyEvent::new(key, modifiers);
-                    let _ = tx.send(InputEvent::KeyUp(ke));
-                    if is_modifier_key(key) {
-                        state.release(key);
-                    }
-                }
-            }
-            EventType::ButtonPress(btn) => {
-                let button = match btn {
-                    rdev::Button::Left => Some(MouseButton::Left),
-                    rdev::Button::Right => Some(MouseButton::Right),
-                    rdev::Button::Middle => Some(MouseButton::Middle),
-                    _ => None,
-                };
-                if let Some(b) = button {
-                    let _ = tx.send(InputEvent::MouseDown(MouseButtonEvent::new(b)));
-                }
-            }
-            EventType::ButtonRelease(btn) => {
-                let button = match btn {
-                    rdev::Button::Left => Some(MouseButton::Left),
-                    rdev::Button::Right => Some(MouseButton::Right),
-                    rdev::Button::Middle => Some(MouseButton::Middle),
-                    _ => None,
-                };
-                if let Some(b) = button {
-                    let _ = tx.send(InputEvent::MouseUp(MouseButtonEvent::new(b)));
-                }
-            }
-            EventType::Wheel { delta_y, .. } => {
-                let direction = if delta_y > 0 {
-                    ScrollDirection::Up
-                } else if delta_y < 0 {
-                    ScrollDirection::Down
-                } else {
-                    return;
-                };
-                let _ = tx.send(InputEvent::MouseWheel(ScrollEvent::new(direction)));
-            }
-            EventType::MouseMove { x, y } => {
-                let now = Instant::now();
-                if now.duration_since(last_move_sent) >= move_throttle {
-                    last_move_sent = now;
-                    let _ = tx.send(InputEvent::MouseMove(MouseMoveEvent::new(x, y)));
-                }
-            }
-        }
-    }
-}
-
 /// Spawn a background thread that listens for real keyboard and mouse input
 /// and forwards events over the provided channel.
-///
-/// If the platform listener fails to initialise (e.g. X11 display not yet
-/// available, or Windows hook installation error) the thread retries up to
-/// `MAX_RETRIES` times with exponential back-off before giving up.
 pub fn spawn_input_listener(tx: mpsc::Sender<InputEvent>) {
     thread::spawn(move || {
-        use std::time::Duration;
+        use rdev::{listen, Event, EventType};
+        use std::sync::Mutex;
 
-        const MAX_RETRIES: u32 = 5;
+        let state = Mutex::new(ModifierState::default());
+        let tx = Mutex::new(tx);
 
-        for attempt in 0..MAX_RETRIES {
-            if attempt > 0 {
-                let delay = Duration::from_millis(500 * (1u64 << (attempt - 1).min(3)));
-                eprintln!(
-                    "[input] Retrying listener (attempt {}/{}), waiting {delay:?}...",
-                    attempt + 1,
-                    MAX_RETRIES,
-                );
-                thread::sleep(delay);
-            }
+        let callback = move |event: Event| {
+            let mut state = state.lock().unwrap();
+            let tx = tx.lock().unwrap();
 
-            let callback = make_listener_callback(tx.clone());
-
-            eprintln!(
-                "[input] Starting listener (attempt {}/{})...",
-                attempt + 1,
-                MAX_RETRIES,
-            );
-
-            match rdev::listen(callback) {
-                Ok(()) => {
-                    // listen() returned normally – the platform hook exited.
-                    eprintln!("[input] Listener exited unexpectedly, will retry.");
+            match event.event_type {
+                EventType::KeyPress(rkey) => {
+                    if let Some(key) = rdev_key_to_key(rkey) {
+                        if is_modifier_key(key) {
+                            state.press(key);
+                        } else {
+                            let modifiers = state.as_modifiers();
+                            let ke = KeyEvent::new(key, modifiers);
+                            let _ = tx.send(InputEvent::Key(ke));
+                        }
+                    }
                 }
-                Err(e) => {
-                    eprintln!("[input] Listener error: {e:?}");
+                EventType::KeyRelease(rkey) => {
+                    if let Some(key) = rdev_key_to_key(rkey) {
+                        if is_modifier_key(key) {
+                            // If modifier was released without any other key in between,
+                            // emit it as a standalone key event.
+                            let modifiers = state.as_modifiers();
+                            // Remove this modifier from the reported modifiers
+                            let mut clean_mods = modifiers;
+                            match key {
+                                Key::Shift => clean_mods.remove(Modifiers::SHIFT),
+                                Key::Ctrl => clean_mods.remove(Modifiers::CTRL),
+                                Key::Alt => clean_mods.remove(Modifiers::ALT),
+                                Key::Win => clean_mods.remove(Modifiers::WIN),
+                                _ => {}
+                            }
+                            state.release(key);
+                        }
+                    }
                 }
+                EventType::ButtonPress(btn) => {
+                    let button = match btn {
+                        rdev::Button::Left => Some(MouseButton::Left),
+                        rdev::Button::Right => Some(MouseButton::Right),
+                        rdev::Button::Middle => Some(MouseButton::Middle),
+                        _ => None,
+                    };
+                    if let Some(b) = button {
+                        let _ = tx.send(InputEvent::MouseClick(MouseClickEvent::new(b)));
+                    }
+                }
+                EventType::Wheel { delta_y, .. } => {
+                    let direction = if delta_y > 0 {
+                        ScrollDirection::Up
+                    } else if delta_y < 0 {
+                        ScrollDirection::Down
+                    } else {
+                        return;
+                    };
+                    let _ = tx.send(InputEvent::Scroll(ScrollEvent::new(direction)));
+                }
+                _ => {}
             }
+        };
+
+        if let Err(e) = listen(callback) {
+            eprintln!("Input listener error: {:?}", e);
         }
-
-        eprintln!("[input] All {MAX_RETRIES} retries exhausted. Input capture unavailable.");
     });
 }
 
