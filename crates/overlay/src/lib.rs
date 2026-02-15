@@ -271,6 +271,7 @@ struct App {
     /// to prevent position drift when tray content changes width.
     fixed_size: Option<[f32; 2]>,
     last_live_origin: Option<egui::Pos2>,
+    keep_overlay_alive: bool,
 }
 
 impl App {
@@ -294,6 +295,7 @@ impl App {
             was_overlay_visible: false,
             fixed_size: None,
             last_live_origin: None,
+            keep_overlay_alive: false,
         }
     }
 
@@ -547,8 +549,12 @@ impl eframe::App for App {
 
         if self.draft.overlay_enabled {
             let was_positioning_mode = self.draft.positioning_mode;
+            if self.draft.positioning_mode {
+                self.keep_overlay_alive = true;
+            }
             if should_lock_positioning_mode {
                 self.draft.positioning_mode = false;
+                self.keep_overlay_alive = true;
                 self.apply();
             }
 
@@ -570,13 +576,19 @@ impl eframe::App for App {
             let preview_label =
                 if self.draft.positioning_mode && chord.is_none() && !mouse_icon_visible {
                     Some("Positioning Mode")
+                } else if self.keep_overlay_alive
+                    && chord.is_none()
+                    && !mouse_icon_visible
+                    && visible_mouse_label.is_none()
+                {
+                    Some("Overlay Locked")
                 } else {
                     None
                 };
             let display_label = visible_mouse_label.or(preview_label);
 
             let has_content = chord.is_some() || mouse_icon_visible || display_label.is_some();
-            let overlay_visible = if self.draft.positioning_mode {
+            let overlay_visible = if self.draft.positioning_mode || self.keep_overlay_alive {
                 true
             } else {
                 self.input_state.overlay_visible(now) && has_content
@@ -590,6 +602,7 @@ impl eframe::App for App {
                 self.fixed_origin = None;
                 self.fixed_size = None;
                 self.last_live_origin = None;
+                self.keep_overlay_alive = false;
                 self.was_overlay_visible = false;
             } else {
                 let palette = Palette::from_config(&self.draft);
@@ -797,6 +810,8 @@ impl eframe::App for App {
                     },
                 );
             }
+        } else {
+            self.keep_overlay_alive = false;
         }
 
         ctx.request_repaint_after(Duration::from_millis(16));
