@@ -9,6 +9,7 @@ use std::time::{Duration, Instant};
 
 use anyhow::Result;
 use eframe::egui;
+use eframe::epaint::Rgba;
 use keyoverlay_core::{AppConfig, OverlayPosition, SharedConfig};
 use keyoverlay_input::{InputEvent, Key, MouseButton};
 
@@ -221,7 +222,7 @@ impl App {
 
 impl eframe::App for App {
     fn clear_color(&self, _visuals: &egui::Visuals) -> [f32; 4] {
-        egui::Color32::TRANSPARENT.to_normalized_gamma_f32()
+        Rgba::TRANSPARENT.to_array()
     }
 
     fn update(&mut self, ctx: &egui::Context, _frame: &mut eframe::Frame) {
@@ -350,6 +351,7 @@ pub fn run(rx: Receiver<InputEvent>, config: SharedConfig) -> Result<()> {
             .with_resizable(true)
             .with_min_inner_size([420.0, 400.0])
             .with_transparent(true),
+        renderer: eframe::Renderer::Wgpu,
         ..Default::default()
     };
 
