@@ -8,6 +8,12 @@ pub struct PillRect {
 }
 
 #[cfg(target_os = "windows")]
+pub type OverlayHwnd = windows::Win32::Foundation::HWND;
+
+#[cfg(not(target_os = "windows"))]
+pub type OverlayHwnd = isize;
+
+#[cfg(target_os = "windows")]
 mod imp {
     use std::ffi::OsStr;
     use std::iter::once;
@@ -16,7 +22,7 @@ mod imp {
 
     use windows::core::PCWSTR;
     use windows::Win32::Foundation::{GetLastError, BOOL, HWND};
-    use windows::Win32::Graphics::Dwm::{DwmSetWindowAttribute, DWMWA_TRANSITIONS_FORCEDISABLED};
+    use windows::Win32::Graphics::Dwm::{DwmSetWindowAttribute, DWMWINDOWATTRIBUTE};
     use windows::Win32::Graphics::Gdi::{CreateRoundRectRgn, DeleteObject, SetWindowRgn};
     use windows::Win32::UI::WindowsAndMessaging::FindWindowW;
 
@@ -26,53 +32,48 @@ mod imp {
 
     fn hwnd_from_title(title: &str) -> Option<HWND> {
         let title_w = to_wide(title);
-        let hwnd = unsafe { FindWindowW(PCWSTR::null(), PCWSTR(title_w.as_ptr())) };
-        if hwnd.0 == 0 {
+        let hwnd = unsafe { FindWindowW(PCWSTR::null(), PCWSTR(title_w.as_ptr())) }.ok()?;
+        if hwnd.0.is_null() {
             None
         } else {
             Some(hwnd)
         }
     }
 
-    pub fn disable_window_transitions(hwnd_raw: isize) -> Result<(), String> {
-        let hwnd = HWND(hwnd_raw);
-        let disable = BOOL::from(true);
-
-        let result = unsafe {
+    pub fn disable_dwm_transitions(hwnd: HWND) -> Result<(), String> {
+        let value = BOOL(1);
+        unsafe {
             DwmSetWindowAttribute(
                 hwnd,
-                DWMWA_TRANSITIONS_FORCEDISABLED,
-                &disable as *const _ as *const _,
+                DWMWINDOWATTRIBUTE(3),
+                &value as *const _ as *const _,
                 size_of::<BOOL>() as u32,
             )
-        };
-
-        result
-            .ok()
-            .map_err(|e| format!("DwmSetWindowAttribute failed: {e}"))
+        }
+        .map_err(|e| format!("DwmSetWindowAttribute failed: {e:?}"))
     }
 
-    pub fn apply_test_region(title: &str) -> Option<isize> {
+    pub fn apply_test_region(title: &str) -> Option<HWND> {
         let hwnd = hwnd_from_title(title)?;
         eprintln!("[overlay-region] Applying TEST region hwnd={hwnd:?}");
 
         let hrgn = unsafe { CreateRoundRectRgn(0, 0, 240, 80, 40, 40) };
-        if hrgn.0 == 0 {
+        if hrgn.0.is_null() {
             let err = unsafe { GetLastError() };
-            eprintln!("[overlay-region] CreateRoundRectRgn(TEST) failed err={err}");
-            return Some(hwnd.0);
+            eprintln!("[overlay-region] CreateRoundRectRgn(TEST) failed err={err:?}");
+            return Some(hwnd);
         }
 
         let res = unsafe { SetWindowRgn(hwnd, hrgn, true) };
         if res == 0 {
             let err = unsafe { GetLastError() };
-            eprintln!("[overlay-region] SetWindowRgn(TEST) failed err={err}");
+            eprintln!("[overlay-region] SetWindowRgn(TEST) failed err={err:?}");
             let _ = unsafe { DeleteObject(hrgn) };
         } else {
             eprintln!("[overlay-region] SetWindowRgn(TEST) ok");
         }
 
-        Some(hwnd.0)
+        Some(hwnd)
     }
 
     pub fn apply_tray_region(
@@ -80,7 +81,7 @@ mod imp {
         width: i32,
         height: i32,
         tray_radius_px: i32,
-    ) -> Option<isize> {
+    ) -> Option<HWND> {
         let hwnd = hwnd_from_title(title)?;
         let tray_w = width.max(1);
         let tray_h = height.max(1);
@@ -92,28 +93,28 @@ mod imp {
         );
 
         let tray_rgn = unsafe { CreateRoundRectRgn(0, 0, tray_w, tray_h, rr * 2, rr * 2) };
-        if tray_rgn.0 == 0 {
+        if tray_rgn.0.is_null() {
             let err = unsafe { GetLastError() };
-            eprintln!("[overlay-region] CreateRoundRectRgn(TRAY) failed err={err}");
-            return Some(hwnd.0);
+            eprintln!("[overlay-region] CreateRoundRectRgn(TRAY) failed err={err:?}");
+            return Some(hwnd);
         }
 
         let res = unsafe { SetWindowRgn(hwnd, tray_rgn, true) };
         if res == 0 {
             let err = unsafe { GetLastError() };
-            eprintln!("[overlay-region] SetWindowRgn(TRAY) failed err={err}");
+            eprintln!("[overlay-region] SetWindowRgn(TRAY) failed err={err:?}");
             let _ = unsafe { DeleteObject(tray_rgn) };
         }
 
-        Some(hwnd.0)
+        Some(hwnd)
     }
 }
 
 #[cfg(target_os = "windows")]
-pub use imp::{apply_test_region, apply_tray_region, disable_window_transitions};
+pub use imp::{apply_test_region, apply_tray_region, disable_dwm_transitions};
 
 #[cfg(not(target_os = "windows"))]
-pub fn apply_test_region(_title: &str) -> Option<isize> {
+pub fn apply_test_region(_title: &str) -> Option<OverlayHwnd> {
     None
 }
 
@@ -123,11 +124,11 @@ pub fn apply_tray_region(
     _width: i32,
     _height: i32,
     _tray_radius_px: i32,
-) -> Option<isize> {
+) -> Option<OverlayHwnd> {
     None
 }
 
 #[cfg(not(target_os = "windows"))]
-pub fn disable_window_transitions(_hwnd_raw: isize) -> Result<(), String> {
+pub fn disable_dwm_transitions(_hwnd: OverlayHwnd) -> Result<(), String> {
     Ok(())
 }

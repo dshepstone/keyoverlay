@@ -16,7 +16,9 @@ use keyoverlay_core::{AppConfig, OverlayPosition, SharedConfig};
 use keyoverlay_input::{InputEvent, Key, MouseButton};
 use mouse_icon::{draw_mouse_icon, MouseHighlight};
 
-use win_region::{apply_test_region, apply_tray_region, disable_window_transitions, PillRect};
+use win_region::{
+    apply_test_region, apply_tray_region, disable_dwm_transitions, OverlayHwnd, PillRect,
+};
 
 const OVERLAY_VIEWPORT_TITLE: &str = "KeyOverlayOverlay";
 const OVERLAY_IDLE_HIDE_MS: u64 = 700;
@@ -254,7 +256,7 @@ struct App {
     screen_size: [f32; 2],
     last_region_geometry: Option<OverlayGeometry>,
     region_test_applied: bool,
-    last_hwnd: Option<isize>,
+    last_hwnd: Option<OverlayHwnd>,
     transitions_disabled: bool,
 }
 
@@ -448,13 +450,13 @@ impl App {
         if let Some(hwnd_val) = hwnd {
             if let Some(last) = self.last_hwnd {
                 if last != hwnd_val {
-                    eprintln!("[overlay-region] HWND changed old=0x{last:x} new=0x{hwnd_val:x}");
+                    eprintln!("[overlay-region] HWND changed old={last:?} new={hwnd_val:?}");
                     self.transitions_disabled = false;
                 }
             }
 
             if !self.transitions_disabled {
-                if let Err(err) = disable_window_transitions(hwnd_val) {
+                if let Err(err) = disable_dwm_transitions(hwnd_val) {
                     eprintln!("[overlay-region] failed to disable DWM transitions: {err}");
                 } else {
                     self.transitions_disabled = true;
