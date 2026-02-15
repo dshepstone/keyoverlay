@@ -1858,6 +1858,7 @@ dependencies = [
  "eframe",
  "keyoverlay-core",
  "keyoverlay-input",
+ "windows-sys 0.59.0",
 ]
 
 [[package]]
