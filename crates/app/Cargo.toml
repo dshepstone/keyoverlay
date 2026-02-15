@@ -4,12 +4,18 @@ version = "0.1.0"
 edition = { workspace = true }
 license = { workspace = true }
 rust-version = { workspace = true }
+build = "build.rs"
 
 [dependencies]
 anyhow = "1"
+eframe = "0.27"
+image = { version = "0.24.9", default-features = false, features = ["png"] }
 keyoverlay-core = { path = "../core" }
 keyoverlay-input = { path = "../input" }
 keyoverlay-overlay = { path = "../overlay" }
+
+[build-dependencies]
+winres = "0.1"
 
 [[bin]]
 name = "keyoverlay-app"
