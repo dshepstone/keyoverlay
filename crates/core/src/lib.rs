@@ -170,7 +170,7 @@ impl Default for AppConfig {
             theme: Theme::Dark,
             font_size: 18.0,
             overlay_opacity: 1.0,
-            background_opacity: 0.0,
+            background_opacity: 0.7,
             pill_rounding: 8.0,
 
             custom_key_bg: Color::rgb(55, 55, 75),

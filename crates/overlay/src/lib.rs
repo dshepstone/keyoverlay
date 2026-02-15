@@ -72,9 +72,6 @@ struct App {
     rx: Receiver<InputEvent>,
     events: VecDeque<DisplayEvent>,
     last_mouse_btn: Option<(MouseButton, Instant)>,
-
-    /// Cached content size from previous frame for dynamic window sizing.
-    last_content_size: [f32; 2],
 }
 
 impl App {
@@ -88,7 +85,6 @@ impl App {
             rx,
             events: VecDeque::with_capacity(16),
             last_mouse_btn: None,
-            last_content_size: [1.0, 1.0],
         }
     }
 
@@ -163,28 +159,6 @@ impl App {
         MouseHighlight::None
     }
 
-    /// Returns true when there is visible content to show (active events or mouse icon with recent click).
-    fn has_visible_content(&self) -> bool {
-        let now = Instant::now();
-        let d = self.draft.display_duration_secs as f64;
-        let f = self.draft.fade_duration_secs as f64;
-
-        // Any non-expired event pills?
-        let has_events = self.events.iter().any(|e| !e.is_expired(now, d, f));
-
-        // Mouse icon with a recent click?
-        let has_mouse = self.draft.show_mouse_icon && {
-            if let Some((_btn, t)) = self.last_mouse_btn {
-                let age = now.duration_since(t).as_secs_f64();
-                age < (d + f)
-            } else {
-                false
-            }
-        };
-
-        has_events || has_mouse
-    }
-
     /// Compute the overlay window position based on config.
     fn compute_overlay_position(&self, win_size: [f32; 2]) -> egui::Pos2 {
         let cfg = &self.draft;
@@ -254,25 +228,17 @@ impl eframe::App for App {
         settings_window::draw_settings(ctx, self);
 
         // ── Render overlay (child viewport) ──
-        // Only show the overlay viewport when enabled AND there is something to
-        // display.  When idle the window disappears completely (like Keystro).
-        let show_overlay = self.draft.overlay_enabled && self.has_visible_content();
-
-        if show_overlay {
-            // Measure content size NOW (before creating the viewport) so the
-            // window is correctly sized on the very first frame content appears.
-            let content_size = self.measure_content_size();
-            self.last_content_size = content_size;
-
+        // Always show the overlay when enabled so the mouse icon and
+        // keystrokes are visible.
+        if self.draft.overlay_enabled {
             let cfg = self.draft.clone();
             let palette = Palette::from_config(&cfg);
             let events: Vec<DisplayEvent> = self.events.iter().rev().cloned().collect();
             let mouse_hl = self.mouse_highlight();
             let mouse_a = self.mouse_alpha();
-            let bg_opacity = cfg.background_opacity;
 
-            let win_w = content_size[0] + OVERLAY_PADDING * 2.0;
-            let win_h = content_size[1] + OVERLAY_PADDING * 2.0;
+            let win_w = cfg.overlay_width;
+            let win_h = cfg.overlay_height;
             let win_pos = self.compute_overlay_position([win_w, win_h]);
 
             ctx.show_viewport_immediate(
@@ -289,9 +255,8 @@ impl eframe::App for App {
                 move |ctx, _class| {
                     ensure_windows_overlay_transparency();
 
-                    // Override visuals so the viewport clears to transparent
-                    // (prevents the settings-window dark panel_fill from
-                    // leaking into this viewport).
+                    // Override visuals so the viewport background is transparent;
+                    // we paint our own rounded background below.
                     let mut vis = egui::Visuals::dark();
                     vis.panel_fill = egui::Color32::TRANSPARENT;
                     vis.window_fill = egui::Color32::TRANSPARENT;
@@ -308,8 +273,10 @@ impl eframe::App for App {
                             let opacity = cfg.overlay_opacity;
                             let panel_rect = ui.available_rect_before_wrap();
 
-                            // Draw a rounded semi-transparent background behind content.
-                            let bg_alpha = (bg_opacity * opacity * 255.0) as u8;
+                            // Draw a rounded semi-transparent background behind
+                            // all content so the overlay is always visible.
+                            let bg_alpha =
+                                (cfg.background_opacity * opacity * 255.0) as u8;
                             let bg_color =
                                 egui::Color32::from_rgba_unmultiplied(30, 30, 40, bg_alpha);
                             ui.painter().rect_filled(
@@ -318,7 +285,7 @@ impl eframe::App for App {
                                 bg_color,
                             );
 
-                            // Lay out content inside padding.
+                            // Content area inside padding.
                             let content_rect = panel_rect.shrink(OVERLAY_PADDING);
                             let mut content_ui = ui.child_ui(
                                 content_rect,
@@ -358,47 +325,6 @@ impl eframe::App for App {
 
         // Repaint for animations.
         ctx.request_repaint_after(std::time::Duration::from_millis(16));
-    }
-}
-
-impl App {
-    /// Compute the content size (width, height) based on current events and config.
-    fn measure_content_size(&self) -> [f32; 2] {
-        let cfg = &self.draft;
-        let now = Instant::now();
-        let d = cfg.display_duration_secs as f64;
-        let f = cfg.fade_duration_secs as f64;
-
-        let mut pills_w: f32 = 0.0;
-        let mut pills_h: f32 = 0.0;
-
-        for event in self.events.iter().rev() {
-            let alpha = event.opacity(now, d, f);
-            if alpha <= 0.0 {
-                continue;
-            }
-            // Estimate pill size: character count * approximate char width + padding.
-            let char_w = cfg.font_size * 0.65;
-            let pill_w = event.label.len() as f32 * char_w + 28.0;
-            let pill_h = cfg.font_size + 16.0;
-            pills_w = pills_w.max(pill_w);
-            pills_h += pill_h + 4.0; // 2px spacing top + bottom
-        }
-
-        let mut total_w: f32 = pills_w;
-        let mut total_h: f32 = pills_h;
-
-        // Mouse icon is 48x68 plus 12px spacing.
-        if cfg.show_mouse_icon {
-            total_w += 48.0 + 12.0;
-            total_h = total_h.max(68.0);
-        }
-
-        // Ensure a visible minimum.
-        total_w = total_w.max(60.0);
-        total_h = total_h.max(40.0);
-
-        [total_w, total_h]
     }
 }
 

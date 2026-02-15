@@ -335,6 +335,19 @@ fn tab_position(app: &mut App, ui: &mut egui::Ui) {
         ui.label("Vertical margin:");
         ui.add(egui::Slider::new(&mut app.draft.margin_y, 0.0..=200.0).suffix(" px"));
     });
+
+    ui.add_space(12.0);
+    section_heading(ui, "Overlay Size");
+
+    ui.horizontal(|ui| {
+        ui.label("Width:");
+        ui.add(egui::Slider::new(&mut app.draft.overlay_width, 100.0..=800.0).suffix(" px"));
+    });
+
+    ui.horizontal(|ui| {
+        ui.label("Height:");
+        ui.add(egui::Slider::new(&mut app.draft.overlay_height, 60.0..=600.0).suffix(" px"));
+    });
 }
 
 fn tab_about(ui: &mut egui::Ui) {
