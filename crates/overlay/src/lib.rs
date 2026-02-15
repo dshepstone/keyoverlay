@@ -5,7 +5,9 @@ mod theme;
 mod win_region;
 
 use std::collections::HashSet;
+use std::env;
 use std::sync::mpsc::Receiver;
+use std::sync::OnceLock;
 use std::time::{Duration, Instant};
 
 use anyhow::Result;
@@ -24,6 +26,8 @@ const OVERLAY_IDLE_HIDE_MS: u64 = 700;
 const MOUSE_ICON_IDLE_HIDE_MS: u64 = 450;
 const OVERLAY_PADDING: f32 = 14.0;
 const LARGE_KEY_FONT_BOOST: f32 = 14.0;
+const REGION_PAD_PX: i32 = 12;
+const REGION_RADIUS_PAD_PX: i32 = 4;
 
 fn ensure_windows_overlay_transparency() {}
 
@@ -131,9 +135,16 @@ fn key_sort_rank(key: Key) -> (u8, String) {
 
 #[derive(Clone, Debug, PartialEq)]
 struct OverlayGeometry {
-    width: f32,
-    height: f32,
+    width_px: i32,
+    height_px: i32,
+    width_points: f32,
+    height_points: f32,
     pill_rects: Vec<PillRect>,
+}
+
+fn region_debug_bounds_enabled() -> bool {
+    static ENABLED: OnceLock<bool> = OnceLock::new();
+    *ENABLED.get_or_init(|| env::var("REGION_DEBUG_BOUNDS").is_ok_and(|v| v == "1"))
 }
 
 struct App {
@@ -253,6 +264,7 @@ impl App {
         mouse_event_label: Option<&str>,
     ) -> OverlayGeometry {
         let padding: f32 = OVERLAY_PADDING;
+        let px_scale: f32 = ctx.pixels_per_point();
         let chord_font: f32 = self.draft.font_size + LARGE_KEY_FONT_BOOST;
         let event_font: f32 = self.draft.font_size + 4.0;
 
@@ -355,10 +367,56 @@ impl App {
             });
         }
 
+        let mut tight_bounds = (i32::MAX, i32::MAX, i32::MIN, i32::MIN);
+        let mut pill_rects_px = Vec::with_capacity(rects.len());
+        for rect in rects {
+            let x = (rect.x as f32 * px_scale).round() as i32;
+            let y = (rect.y as f32 * px_scale).round() as i32;
+            let w = (rect.w as f32 * px_scale).round() as i32;
+            let h = (rect.h as f32 * px_scale).round() as i32;
+            let radius = (rect.radius as f32 * px_scale).round() as i32;
+
+            tight_bounds.0 = tight_bounds.0.min(x);
+            tight_bounds.1 = tight_bounds.1.min(y);
+            tight_bounds.2 = tight_bounds.2.max(x + w);
+            tight_bounds.3 = tight_bounds.3.max(y + h);
+
+            pill_rects_px.push(PillRect { x, y, w, h, radius });
+        }
+
+        if pill_rects_px.is_empty() {
+            let width_px = (window_width * px_scale).round() as i32;
+            let height_px = (window_height * px_scale).round() as i32;
+            return OverlayGeometry {
+                width_px,
+                height_px,
+                width_points: width_px as f32 / px_scale,
+                height_points: height_px as f32 / px_scale,
+                pill_rects: Vec::new(),
+            };
+        }
+
+        let bounds = (
+            tight_bounds.0 - REGION_PAD_PX,
+            tight_bounds.1 - REGION_PAD_PX,
+            tight_bounds.2 + REGION_PAD_PX,
+            tight_bounds.3 + REGION_PAD_PX,
+        );
+
+        for pill in &mut pill_rects_px {
+            pill.x = pill.x - tight_bounds.0 + REGION_PAD_PX;
+            pill.y = pill.y - tight_bounds.1 + REGION_PAD_PX;
+        }
+
+        let width_px = (bounds.2 - bounds.0).max(1);
+        let height_px = (bounds.3 - bounds.1).max(1);
+
         OverlayGeometry {
-            width: window_width,
-            height: window_height,
-            pill_rects: rects,
+            width_px,
+            height_px,
+            width_points: width_px as f32 / px_scale,
+            height_points: height_px as f32 / px_scale,
+            pill_rects: pill_rects_px,
         }
     }
 
@@ -367,15 +425,21 @@ impl App {
             return;
         }
 
-        let width = geometry.width.round() as i32;
-        let height = geometry.height.round() as i32;
+        let width = geometry.width_px;
+        let height = geometry.height_px;
 
         let hwnd = if !self.region_test_applied {
             let hwnd = apply_test_region(OVERLAY_VIEWPORT_TITLE);
             self.region_test_applied = true;
             hwnd
         } else {
-            apply_pill_region(OVERLAY_VIEWPORT_TITLE, width, height, &geometry.pill_rects)
+            apply_pill_region(
+                OVERLAY_VIEWPORT_TITLE,
+                width,
+                height,
+                REGION_RADIUS_PAD_PX,
+                &geometry.pill_rects,
+            )
         };
 
         if let Some(hwnd_val) = hwnd {
@@ -434,8 +498,10 @@ impl eframe::App for App {
                 visible_mouse_label,
             );
 
-            let win_pos =
-                self.compute_overlay_position([geometry.width, geometry.height], self.screen_size);
+            let win_pos = self.compute_overlay_position(
+                [geometry.width_points, geometry.height_points],
+                self.screen_size,
+            );
             let overlay_id = egui::ViewportId::from_hash_of("overlay");
 
             if !overlay_visible {
@@ -444,7 +510,10 @@ impl eframe::App for App {
             } else {
                 ctx.send_viewport_cmd_to(
                     overlay_id,
-                    egui::ViewportCommand::InnerSize(egui::vec2(geometry.width, geometry.height)),
+                    egui::ViewportCommand::InnerSize(egui::vec2(
+                        geometry.width_points,
+                        geometry.height_points,
+                    )),
                 );
                 ctx.send_viewport_cmd_to(overlay_id, egui::ViewportCommand::OuterPosition(win_pos));
                 // Resize/reposition first, then apply region in window-local coordinates.
@@ -455,7 +524,7 @@ impl eframe::App for App {
             ctx.show_viewport_immediate(
                 overlay_id,
                 egui::ViewportBuilder::default()
-                    .with_inner_size([geometry.width, geometry.height])
+                    .with_inner_size([geometry.width_points, geometry.height_points])
                     .with_position(win_pos)
                     .with_title(OVERLAY_VIEWPORT_TITLE)
                     .with_decorations(false)
@@ -486,6 +555,38 @@ impl eframe::App for App {
                                 egui::Color32::from_rgba_unmultiplied(30, 30, 40, bg_alpha);
                             ui.painter()
                                 .rect_filled(panel_rect, cfg.pill_rounding + 6.0, bg_color);
+
+                            if region_debug_bounds_enabled() {
+                                let debug_stroke =
+                                    egui::Stroke::new(1.0, egui::Color32::from_rgb(255, 0, 255));
+                                ui.painter().rect_stroke(
+                                    panel_rect,
+                                    0.0,
+                                    debug_stroke,
+                                    egui::StrokeKind::Inside,
+                                );
+
+                                let px_scale = ctx.pixels_per_point();
+                                for rect in &geometry.pill_rects {
+                                    let min = egui::pos2(
+                                        rect.x as f32 / px_scale,
+                                        rect.y as f32 / px_scale,
+                                    );
+                                    let size = egui::vec2(
+                                        rect.w as f32 / px_scale,
+                                        rect.h as f32 / px_scale,
+                                    );
+                                    ui.painter().rect_stroke(
+                                        egui::Rect::from_min_size(min, size),
+                                        0.0,
+                                        egui::Stroke::new(
+                                            1.0,
+                                            egui::Color32::from_rgb(0, 255, 255),
+                                        ),
+                                        egui::StrokeKind::Inside,
+                                    );
+                                }
+                            }
 
                             let content_rect = panel_rect.shrink(OVERLAY_PADDING);
                             let mut content_ui = ui.child_ui(
