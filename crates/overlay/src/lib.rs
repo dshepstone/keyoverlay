@@ -536,7 +536,7 @@ impl eframe::App for App {
                     .with_mouse_passthrough(true),
                 move |ctx, _class| {
                     ensure_windows_overlay_transparency();
-                    let palette = theme::palette_for(&cfg);
+                    let palette = theme::Palette::from_config(&cfg);
 
                     let mut vis = egui::Visuals::light();
                     vis.panel_fill = egui::Color32::WHITE;
