@@ -66,11 +66,11 @@ impl OverlayPosition {
 }
 
 fn default_overlay_x() -> f32 {
-    500.0
+    40.0
 }
 
 fn default_overlay_y() -> f32 {
-    500.0
+    940.0
 }
 
 // ── Overlay Layout ───────────────────────────────────────────────────────
@@ -192,14 +192,14 @@ impl Default for AppConfig {
             show_mouse_icon: true,
             show_scroll: true,
 
-            position: OverlayPosition::TopRight,
-            layout: OverlayLayout::Vertical,
+            position: OverlayPosition::Manual,
+            layout: OverlayLayout::Horizontal,
             margin_x: 40.0,
             margin_y: 60.0,
             overlay_width: 280.0,
             overlay_height: 200.0,
-            overlay_x: 500.0,
-            overlay_y: 500.0,
+            overlay_x: 40.0,
+            overlay_y: 940.0,
         }
     }
 }

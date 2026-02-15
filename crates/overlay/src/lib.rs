@@ -269,9 +269,6 @@ impl App {
 
     fn compute_overlay_position(&self, win_size: [f32; 2], screen: [f32; 2]) -> egui::Pos2 {
         let cfg = &self.draft;
-        if cfg.position == OverlayPosition::Manual {
-            return egui::pos2(cfg.overlay_x, cfg.overlay_y);
-        }
 
         let sw = screen[0];
         let sh = screen[1];
@@ -280,7 +277,7 @@ impl App {
         let mx = cfg.margin_x;
         let my = cfg.margin_y;
 
-        match cfg.position {
+        let pos = match cfg.position {
             OverlayPosition::BottomCenter => egui::pos2((sw - w) / 2.0, sh - h - my),
             OverlayPosition::BottomLeft => egui::pos2(mx, sh - h - my),
             OverlayPosition::BottomRight => egui::pos2(sw - w - mx, sh - h - my),
@@ -289,7 +286,12 @@ impl App {
             OverlayPosition::TopRight => egui::pos2(sw - w - mx, my),
             OverlayPosition::Center => egui::pos2((sw - w) / 2.0, (sh - h) / 2.0),
             OverlayPosition::Manual => egui::pos2(cfg.overlay_x, cfg.overlay_y),
-        }
+        };
+
+        // Clamp to visible screen area so the overlay never ends up off-screen.
+        let x = pos.x.clamp(0.0, (sw - w).max(0.0));
+        let y = pos.y.clamp(0.0, (sh - h).max(0.0));
+        egui::pos2(x, y)
     }
 
     fn measure_text(ctx: &egui::Context, text: &str, font_size: f32) -> egui::Vec2 {
@@ -444,36 +446,48 @@ impl eframe::App for App {
             let now = Instant::now();
             self.input_state.tick(now);
 
-            let overlay_visible = self.input_state.overlay_visible(now);
             let mouse_icon_visible =
                 self.draft.show_mouse_icon && self.input_state.mouse_icon_visible(now);
             let mouse_label_visible = self.input_state.mouse_label_visible(now);
             let chord = self.input_state.current_chord();
             let mouse_label = self.input_state.mouse_label.clone();
 
-            let cfg = self.draft.clone();
             let visible_mouse_label = if mouse_label_visible {
                 mouse_label.as_deref()
             } else {
                 None
             };
-            let geometry = self.build_overlay_geometry(
-                ctx,
-                chord.as_deref(),
-                mouse_icon_visible,
-                visible_mouse_label,
-            );
 
-            let win_pos = self.compute_overlay_position(
-                [geometry.width_points, geometry.height_points],
-                self.screen_size,
-            );
+            // Only show the overlay when it is active AND there is actual
+            // content (chord, mouse icon, or mouse label) to render.
+            // Without the content check the window stays visible as a blank
+            // white rounded rectangle for the full idle-hide duration after
+            // every keystroke.
+            let has_content =
+                chord.is_some() || mouse_icon_visible || visible_mouse_label.is_some();
+            let overlay_visible = self.input_state.overlay_visible(now) && has_content;
+
             let overlay_id = egui::ViewportId::from_hash_of("overlay");
 
             if !overlay_visible {
+                // Hide the overlay completely – skip show_viewport_immediate
+                // so no window is created/shown at all.
                 ctx.send_viewport_cmd_to(overlay_id, egui::ViewportCommand::Visible(false));
                 self.last_region_geometry = None;
             } else {
+                let _cfg = self.draft.clone();
+                let geometry = self.build_overlay_geometry(
+                    ctx,
+                    chord.as_deref(),
+                    mouse_icon_visible,
+                    visible_mouse_label,
+                );
+
+                let win_pos = self.compute_overlay_position(
+                    [geometry.width_points, geometry.height_points],
+                    self.screen_size,
+                );
+
                 ctx.send_viewport_cmd_to(
                     overlay_id,
                     egui::ViewportCommand::InnerSize(egui::vec2(
@@ -485,105 +499,113 @@ impl eframe::App for App {
                 // Resize/reposition first, then apply region in window-local coordinates.
                 self.maybe_apply_window_region(&geometry);
                 ctx.send_viewport_cmd_to(overlay_id, egui::ViewportCommand::Visible(true));
-            }
 
-            ctx.show_viewport_immediate(
-                overlay_id,
-                egui::ViewportBuilder::default()
-                    .with_inner_size([geometry.width_points, geometry.height_points])
-                    .with_position(win_pos)
-                    .with_title(OVERLAY_VIEWPORT_TITLE)
-                    .with_decorations(false)
-                    .with_always_on_top()
-                    .with_resizable(false)
-                    .with_transparent(true)
-                    .with_mouse_passthrough(true),
-                move |ctx, _class| {
-                    ensure_windows_overlay_transparency();
+                ctx.show_viewport_immediate(
+                    overlay_id,
+                    egui::ViewportBuilder::default()
+                        .with_inner_size([geometry.width_points, geometry.height_points])
+                        .with_position(win_pos)
+                        .with_title(OVERLAY_VIEWPORT_TITLE)
+                        .with_decorations(false)
+                        .with_always_on_top()
+                        .with_resizable(false)
+                        .with_transparent(true)
+                        .with_mouse_passthrough(true),
+                    move |ctx, _class| {
+                        ensure_windows_overlay_transparency();
 
-                    let mut vis = egui::Visuals::light();
-                    vis.panel_fill = egui::Color32::WHITE;
-                    vis.window_fill = egui::Color32::WHITE;
-                    vis.extreme_bg_color = egui::Color32::WHITE;
-                    ctx.set_visuals(vis);
+                        let mut vis = egui::Visuals::light();
+                        vis.panel_fill = egui::Color32::WHITE;
+                        vis.window_fill = egui::Color32::WHITE;
+                        vis.extreme_bg_color = egui::Color32::WHITE;
+                        ctx.set_visuals(vis);
 
-                    egui::CentralPanel::default()
-                        .frame(egui::Frame::none().fill(egui::Color32::WHITE))
-                        .show(ctx, |ui| {
-                            if !overlay_visible {
-                                return;
-                            }
-
-                            let panel_rect = ui.available_rect_before_wrap();
-                            let tray_rounding =
-                                egui::Rounding::same(TRAY_RADIUS as f32 / ctx.pixels_per_point());
-                            ui.painter().rect_filled(
-                                panel_rect,
-                                tray_rounding,
-                                egui::Color32::WHITE,
-                            );
-
-                            if region_debug_bounds_enabled() {
-                                let window_debug_stroke =
-                                    egui::Stroke::new(1.0, egui::Color32::from_rgb(0, 255, 0));
-                                let rounding = egui::Rounding::same(0.0);
-                                paint_rect_stroke_inside(
-                                    ui,
+                        egui::CentralPanel::default()
+                            .frame(egui::Frame::none().fill(egui::Color32::WHITE))
+                            .show(ctx, |ui| {
+                                let panel_rect = ui.available_rect_before_wrap();
+                                let tray_rounding = egui::Rounding::same(
+                                    TRAY_RADIUS as f32 / ctx.pixels_per_point(),
+                                );
+                                ui.painter().rect_filled(
                                     panel_rect,
-                                    rounding,
-                                    window_debug_stroke,
+                                    tray_rounding,
+                                    egui::Color32::WHITE,
                                 );
 
-                                let pill_debug_stroke =
-                                    egui::Stroke::new(1.0, egui::Color32::from_rgb(255, 0, 255));
-                                let rounding = egui::Rounding::same(0.0);
-                                let px_scale = ctx.pixels_per_point();
-                                for rect in &geometry.pill_rects {
-                                    let min = egui::pos2(
-                                        rect.x as f32 / px_scale,
-                                        rect.y as f32 / px_scale,
+                                if region_debug_bounds_enabled() {
+                                    let window_debug_stroke = egui::Stroke::new(
+                                        1.0,
+                                        egui::Color32::from_rgb(0, 255, 0),
                                     );
-                                    let size = egui::vec2(
-                                        rect.w as f32 / px_scale,
-                                        rect.h as f32 / px_scale,
-                                    );
-                                    let pill_rect = egui::Rect::from_min_size(min, size);
+                                    let rounding = egui::Rounding::same(0.0);
                                     paint_rect_stroke_inside(
                                         ui,
-                                        pill_rect,
+                                        panel_rect,
                                         rounding,
-                                        pill_debug_stroke,
+                                        window_debug_stroke,
+                                    );
+
+                                    let pill_debug_stroke = egui::Stroke::new(
+                                        1.0,
+                                        egui::Color32::from_rgb(255, 0, 255),
+                                    );
+                                    let rounding = egui::Rounding::same(0.0);
+                                    let px_scale = ctx.pixels_per_point();
+                                    for rect in &geometry.pill_rects {
+                                        let min = egui::pos2(
+                                            rect.x as f32 / px_scale,
+                                            rect.y as f32 / px_scale,
+                                        );
+                                        let size = egui::vec2(
+                                            rect.w as f32 / px_scale,
+                                            rect.h as f32 / px_scale,
+                                        );
+                                        let pill_rect = egui::Rect::from_min_size(min, size);
+                                        paint_rect_stroke_inside(
+                                            ui,
+                                            pill_rect,
+                                            rounding,
+                                            pill_debug_stroke,
+                                        );
+                                    }
+                                }
+
+                                let px_scale = ctx.pixels_per_point();
+                                let pill_fill = egui::Color32::from_rgb(122, 71, 255);
+                                let pill_text = egui::Color32::WHITE;
+
+                                for ((rect, label), font_size) in geometry
+                                    .pill_rects
+                                    .iter()
+                                    .zip(geometry.pill_labels.iter())
+                                    .zip(geometry.pill_font_sizes.iter())
+                                {
+                                    let pill_rect = egui::Rect::from_min_size(
+                                        egui::pos2(
+                                            rect.x as f32 / px_scale,
+                                            rect.y as f32 / px_scale,
+                                        ),
+                                        egui::vec2(
+                                            rect.w as f32 / px_scale,
+                                            rect.h as f32 / px_scale,
+                                        ),
+                                    );
+                                    let rounding =
+                                        egui::Rounding::same(rect.radius as f32 / px_scale);
+                                    ui.painter().rect_filled(pill_rect, rounding, pill_fill);
+                                    ui.painter().text(
+                                        pill_rect.center(),
+                                        egui::Align2::CENTER_CENTER,
+                                        label,
+                                        egui::FontId::proportional(*font_size),
+                                        pill_text,
                                     );
                                 }
-                            }
-
-                            let px_scale = ctx.pixels_per_point();
-                            let pill_fill = egui::Color32::from_rgb(122, 71, 255);
-                            let pill_text = egui::Color32::WHITE;
-
-                            for ((rect, label), font_size) in geometry
-                                .pill_rects
-                                .iter()
-                                .zip(geometry.pill_labels.iter())
-                                .zip(geometry.pill_font_sizes.iter())
-                            {
-                                let pill_rect = egui::Rect::from_min_size(
-                                    egui::pos2(rect.x as f32 / px_scale, rect.y as f32 / px_scale),
-                                    egui::vec2(rect.w as f32 / px_scale, rect.h as f32 / px_scale),
-                                );
-                                let rounding = egui::Rounding::same(rect.radius as f32 / px_scale);
-                                ui.painter().rect_filled(pill_rect, rounding, pill_fill);
-                                ui.painter().text(
-                                    pill_rect.center(),
-                                    egui::Align2::CENTER_CENTER,
-                                    label,
-                                    egui::FontId::proportional(*font_size),
-                                    pill_text,
-                                );
-                            }
-                        });
-                },
-            );
+                            });
+                    },
+                );
+            }
         }
 
         ctx.request_repaint_after(Duration::from_millis(16));
