@@ -39,14 +39,14 @@ fn ensure_windows_overlay_transparency() {}
 struct InputState {
     pressed_keys: HashSet<Key>,
     pressed_mouse_buttons: HashSet<MouseButton>,
-    last_key_activity: Instant,
+    key_sequence_started_at: Instant,
     last_mouse_activity: Instant,
     mouse_icon_active: bool,
     mouse_label: Option<String>,
     last_mouse_was_scroll: bool,
     pending_left_press_at: Option<Instant>,
     pending_left_press_moved: bool,
-    last_chord: Option<String>,
+    display_chord: Option<String>,
     last_mouse_highlight: MouseHighlight,
 }
 
@@ -56,31 +56,32 @@ impl InputState {
         Self {
             pressed_keys: HashSet::new(),
             pressed_mouse_buttons: HashSet::new(),
-            last_key_activity: now,
+            key_sequence_started_at: now,
             last_mouse_activity: now,
             mouse_icon_active: false,
             mouse_label: None,
             last_mouse_was_scroll: false,
             pending_left_press_at: None,
             pending_left_press_moved: false,
-            last_chord: None,
+            display_chord: None,
             last_mouse_highlight: MouseHighlight::None,
         }
     }
 
-    fn refresh_last_chord_from_pressed(&mut self) {
+    fn chord_from_pressed_keys(&self) -> Option<String> {
         if self.pressed_keys.is_empty() {
-            return;
+            return None;
         }
 
         let mut keys: Vec<Key> = self.pressed_keys.iter().copied().collect();
         keys.sort_by_key(|k| key_sort_rank(*k));
-        self.last_chord = Some(
+
+        Some(
             keys.into_iter()
                 .map(|k| k.to_string())
                 .collect::<Vec<_>>()
                 .join(" + "),
-        );
+        )
     }
 
     fn apply_event(&mut self, event: InputEvent) {
@@ -104,14 +105,18 @@ impl InputState {
 
         match event {
             InputEvent::KeyDown(e) => {
+                let was_empty = self.pressed_keys.is_empty();
                 self.pressed_keys.insert(e.key);
-                self.refresh_last_chord_from_pressed();
-                self.last_key_activity = now;
+                if was_empty {
+                    self.key_sequence_started_at = now;
+                }
+                self.display_chord = self.chord_from_pressed_keys();
             }
             InputEvent::KeyUp(e) => {
                 self.pressed_keys.remove(&e.key);
-                self.refresh_last_chord_from_pressed();
-                self.last_key_activity = now;
+                if self.display_chord.is_none() {
+                    self.display_chord = self.chord_from_pressed_keys();
+                }
             }
             InputEvent::MouseDown(e) => {
                 self.pressed_mouse_buttons.insert(e.button);
@@ -194,7 +199,8 @@ impl InputState {
     ) -> bool {
         let keyboard_active = keyboard_enabled
             && (!self.pressed_keys.is_empty()
-                || now.duration_since(self.last_key_activity) < hold_for);
+                || (self.display_chord.is_some()
+                    && now.duration_since(self.key_sequence_started_at) < hold_for));
         let mouse_active = mouse_enabled
             && (!self.pressed_mouse_buttons.is_empty()
                 || (self.mouse_icon_active
@@ -239,19 +245,14 @@ impl InputState {
         }
 
         if !self.pressed_keys.is_empty() {
-            let mut keys: Vec<Key> = self.pressed_keys.iter().copied().collect();
-            keys.sort_by_key(|k| key_sort_rank(*k));
-
-            return Some(
-                keys.into_iter()
-                    .map(|k| k.to_string())
-                    .collect::<Vec<_>>()
-                    .join(" + "),
-            );
+            return self
+                .display_chord
+                .clone()
+                .or_else(|| self.chord_from_pressed_keys());
         }
 
-        if now.duration_since(self.last_key_activity) < hold_for {
-            return self.last_chord.clone();
+        if now.duration_since(self.key_sequence_started_at) < hold_for {
+            return self.display_chord.clone();
         }
 
         None
