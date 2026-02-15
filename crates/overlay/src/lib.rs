@@ -385,6 +385,8 @@ struct App {
     last_hwnd: Option<OverlayHwnd>,
     transitions_disabled: bool,
     manual_preview_until: Option<Instant>,
+    /// True until the first update frame has drained buffered startup events.
+    startup_drain: bool,
 }
 
 impl App {
@@ -416,6 +418,7 @@ impl App {
             last_hwnd: None,
             transitions_disabled: false,
             manual_preview_until: None,
+            startup_drain: true,
         }
     }
 
@@ -632,6 +635,14 @@ impl eframe::App for App {
     }
 
     fn update(&mut self, ctx: &egui::Context, _frame: &mut eframe::Frame) {
+        if self.startup_drain {
+            // Discard any events that buffered while eframe/wgpu was
+            // initialising so they don't cause a freeze or phantom state.
+            while self.rx.try_recv().is_ok() {}
+            self.input_state = InputState::new();
+            self.startup_drain = false;
+        }
+
         while let Ok(event) = self.rx.try_recv() {
             self.input_state.apply_event(event);
         }

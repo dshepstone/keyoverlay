@@ -535,84 +535,127 @@ impl ModifierState {
     }
 }
 
-/// Spawn a background thread that listens for real keyboard and mouse input
-/// and forwards events over the provided channel.
-pub fn spawn_input_listener(tx: mpsc::Sender<InputEvent>) {
-    thread::spawn(move || {
-        use rdev::{listen, Event, EventType};
-        use std::sync::Mutex;
+/// Build the rdev callback that converts raw events into `InputEvent`s
+/// and sends them over the provided channel.
+fn make_listener_callback(
+    tx: mpsc::Sender<InputEvent>,
+) -> impl FnMut(rdev::Event) + 'static {
+    use rdev::EventType;
+    use std::time::Duration;
 
-        let state = Mutex::new(ModifierState::default());
-        let tx = Mutex::new(tx);
+    let mut state = ModifierState::default();
+    let mut last_move_sent = Instant::now();
+    // Throttle mouse‐move events to at most one every 50 ms.
+    let move_throttle = Duration::from_millis(50);
 
-        let callback = move |event: Event| {
-            let mut state = state.lock().unwrap();
-            let tx = tx.lock().unwrap();
-
-            match event.event_type {
-                EventType::KeyPress(rkey) => {
-                    if let Some(key) = rdev_key_to_key(rkey) {
-                        if is_modifier_key(key) {
-                            state.press(key);
-                        }
-
-                        let modifiers = state.as_modifiers();
-                        let ke = KeyEvent::new(key, modifiers);
-                        let _ = tx.send(InputEvent::KeyDown(ke));
+    move |event: rdev::Event| {
+        match event.event_type {
+            EventType::KeyPress(rkey) => {
+                if let Some(key) = rdev_key_to_key(rkey) {
+                    if is_modifier_key(key) {
+                        state.press(key);
+                    }
+                    let modifiers = state.as_modifiers();
+                    let ke = KeyEvent::new(key, modifiers);
+                    let _ = tx.send(InputEvent::KeyDown(ke));
+                }
+            }
+            EventType::KeyRelease(rkey) => {
+                if let Some(key) = rdev_key_to_key(rkey) {
+                    let modifiers = state.as_modifiers();
+                    let ke = KeyEvent::new(key, modifiers);
+                    let _ = tx.send(InputEvent::KeyUp(ke));
+                    if is_modifier_key(key) {
+                        state.release(key);
                     }
                 }
-                EventType::KeyRelease(rkey) => {
-                    if let Some(key) = rdev_key_to_key(rkey) {
-                        let modifiers = state.as_modifiers();
-                        let ke = KeyEvent::new(key, modifiers);
-                        let _ = tx.send(InputEvent::KeyUp(ke));
-
-                        if is_modifier_key(key) {
-                            state.release(key);
-                        }
-                    }
+            }
+            EventType::ButtonPress(btn) => {
+                let button = match btn {
+                    rdev::Button::Left => Some(MouseButton::Left),
+                    rdev::Button::Right => Some(MouseButton::Right),
+                    rdev::Button::Middle => Some(MouseButton::Middle),
+                    _ => None,
+                };
+                if let Some(b) = button {
+                    let _ = tx.send(InputEvent::MouseDown(MouseButtonEvent::new(b)));
                 }
-                EventType::ButtonPress(btn) => {
-                    let button = match btn {
-                        rdev::Button::Left => Some(MouseButton::Left),
-                        rdev::Button::Right => Some(MouseButton::Right),
-                        rdev::Button::Middle => Some(MouseButton::Middle),
-                        _ => None,
-                    };
-                    if let Some(b) = button {
-                        let _ = tx.send(InputEvent::MouseDown(MouseButtonEvent::new(b)));
-                    }
+            }
+            EventType::ButtonRelease(btn) => {
+                let button = match btn {
+                    rdev::Button::Left => Some(MouseButton::Left),
+                    rdev::Button::Right => Some(MouseButton::Right),
+                    rdev::Button::Middle => Some(MouseButton::Middle),
+                    _ => None,
+                };
+                if let Some(b) = button {
+                    let _ = tx.send(InputEvent::MouseUp(MouseButtonEvent::new(b)));
                 }
-                EventType::ButtonRelease(btn) => {
-                    let button = match btn {
-                        rdev::Button::Left => Some(MouseButton::Left),
-                        rdev::Button::Right => Some(MouseButton::Right),
-                        rdev::Button::Middle => Some(MouseButton::Middle),
-                        _ => None,
-                    };
-                    if let Some(b) = button {
-                        let _ = tx.send(InputEvent::MouseUp(MouseButtonEvent::new(b)));
-                    }
-                }
-                EventType::Wheel { delta_y, .. } => {
-                    let direction = if delta_y > 0 {
-                        ScrollDirection::Up
-                    } else if delta_y < 0 {
-                        ScrollDirection::Down
-                    } else {
-                        return;
-                    };
-                    let _ = tx.send(InputEvent::MouseWheel(ScrollEvent::new(direction)));
-                }
-                EventType::MouseMove { x, y } => {
+            }
+            EventType::Wheel { delta_y, .. } => {
+                let direction = if delta_y > 0 {
+                    ScrollDirection::Up
+                } else if delta_y < 0 {
+                    ScrollDirection::Down
+                } else {
+                    return;
+                };
+                let _ = tx.send(InputEvent::MouseWheel(ScrollEvent::new(direction)));
+            }
+            EventType::MouseMove { x, y } => {
+                let now = Instant::now();
+                if now.duration_since(last_move_sent) >= move_throttle {
+                    last_move_sent = now;
                     let _ = tx.send(InputEvent::MouseMove(MouseMoveEvent::new(x, y)));
                 }
             }
-        };
-
-        if let Err(e) = listen(callback) {
-            eprintln!("Input listener error: {:?}", e);
         }
+    }
+}
+
+/// Spawn a background thread that listens for real keyboard and mouse input
+/// and forwards events over the provided channel.
+///
+/// If the platform listener fails to initialise (e.g. X11 display not yet
+/// available, or Windows hook installation error) the thread retries up to
+/// `MAX_RETRIES` times with exponential back-off before giving up.
+pub fn spawn_input_listener(tx: mpsc::Sender<InputEvent>) {
+    thread::spawn(move || {
+        use std::time::Duration;
+
+        const MAX_RETRIES: u32 = 5;
+
+        for attempt in 0..MAX_RETRIES {
+            if attempt > 0 {
+                let delay = Duration::from_millis(500 * (1u64 << (attempt - 1).min(3)));
+                eprintln!(
+                    "[input] Retrying listener (attempt {}/{}), waiting {delay:?}...",
+                    attempt + 1,
+                    MAX_RETRIES,
+                );
+                thread::sleep(delay);
+            }
+
+            let callback = make_listener_callback(tx.clone());
+
+            eprintln!(
+                "[input] Starting listener (attempt {}/{})...",
+                attempt + 1,
+                MAX_RETRIES,
+            );
+
+            match rdev::listen(callback) {
+                Ok(()) => {
+                    // listen() returned normally – the platform hook exited.
+                    eprintln!("[input] Listener exited unexpectedly, will retry.");
+                }
+                Err(e) => {
+                    eprintln!("[input] Listener error: {e:?}");
+                }
+            }
+        }
+
+        eprintln!("[input] All {MAX_RETRIES} retries exhausted. Input capture unavailable.");
     });
 }
 
