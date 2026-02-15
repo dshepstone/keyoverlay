@@ -18,7 +18,6 @@ use win_region::{apply_test_region, apply_tray_region, PillRect};
 
 const OVERLAY_VIEWPORT_TITLE: &str = "KeyOverlayOverlay";
 const MOUSE_ICON_IDLE_HIDE_MS: u64 = 450;
-const FADE_OUT_MS: u64 = 180;
 const LARGE_KEY_FONT_BOOST: f32 = 14.0;
 const GAP_BETWEEN_PILLS: i32 = 10;
 const TRAY_PAD_X: i32 = 22;
@@ -230,7 +229,6 @@ struct App {
 enum OverlayVisibility {
     Hidden,
     Visible,
-    FadingOut { started_at: Instant },
 }
 
 impl App {
@@ -272,29 +270,14 @@ impl App {
         self.apply();
     }
 
-    fn compute_overlay_position(&self, win_size: [f32; 2], screen: [f32; 2]) -> egui::Pos2 {
+    fn compute_overlay_origin(&self, _screen: [f32; 2]) -> egui::Pos2 {
         let cfg = &self.draft;
         if cfg.position == OverlayPosition::Manual {
             return egui::pos2(cfg.overlay_x, cfg.overlay_y);
         }
 
-        let sw = screen[0];
-        let sh = screen[1];
-        let w = win_size[0];
-        let h = win_size[1];
-        let mx = cfg.margin_x;
-        let my = cfg.margin_y;
-
-        match cfg.position {
-            OverlayPosition::BottomCenter => egui::pos2((sw - w) / 2.0, sh - h - my),
-            OverlayPosition::BottomLeft => egui::pos2(mx, sh - h - my),
-            OverlayPosition::BottomRight => egui::pos2(sw - w - mx, sh - h - my),
-            OverlayPosition::TopCenter => egui::pos2((sw - w) / 2.0, my),
-            OverlayPosition::TopLeft => egui::pos2(mx, my),
-            OverlayPosition::TopRight => egui::pos2(sw - w - mx, my),
-            OverlayPosition::Center => egui::pos2((sw - w) / 2.0, (sh - h) / 2.0),
-            OverlayPosition::Manual => egui::pos2(cfg.overlay_x, cfg.overlay_y),
-        }
+        // Keep a fixed anchor that does not depend on the current overlay size.
+        egui::pos2(cfg.margin_x, cfg.margin_y)
     }
 
     fn measure_text(ctx: &egui::Context, text: &str, font_size: f32) -> egui::Vec2 {
@@ -451,35 +434,22 @@ impl eframe::App for App {
             };
             let has_content =
                 chord.is_some() || mouse_icon_visible || visible_mouse_label.is_some();
-            let content_geometry = if has_content {
-                self.build_overlay_geometry(
+            let overlay_id = egui::ViewportId::from_hash_of("overlay");
+
+            if has_content {
+                let Some(geometry) = self.build_overlay_geometry(
                     ctx,
                     chord.as_deref(),
                     mouse_icon_visible,
                     visible_mouse_label,
-                )
-            } else {
-                None
-            };
+                ) else {
+                    ctx.request_repaint_after(Duration::from_millis(16));
+                    return;
+                };
+                let win_pos = self.compute_overlay_origin(self.screen_size);
+                let was_hidden = matches!(self.visibility, OverlayVisibility::Hidden);
 
-            let overlay_id = egui::ViewportId::from_hash_of("overlay");
-            let mut render_alpha = 1.0;
-
-            if has_content {
-                let geometry = content_geometry.expect("content geometry must exist");
-                let win_pos = self.compute_overlay_position(
-                    [geometry.width_points, geometry.height_points],
-                    self.screen_size,
-                );
-
-                if matches!(self.visibility, OverlayVisibility::Hidden) {
-                    ctx.send_viewport_cmd_to(overlay_id, egui::ViewportCommand::Visible(true));
-                }
-
-                self.visibility = OverlayVisibility::Visible;
-                self.last_geometry = Some(geometry.clone());
-                self.last_win_pos = Some(win_pos);
-
+                // Resize/reposition first, then apply region in window-local coordinates.
                 ctx.send_viewport_cmd_to(
                     overlay_id,
                     egui::ViewportCommand::InnerSize(egui::vec2(
@@ -488,29 +458,31 @@ impl eframe::App for App {
                     )),
                 );
                 ctx.send_viewport_cmd_to(overlay_id, egui::ViewportCommand::OuterPosition(win_pos));
-                // Resize/reposition first, then apply region in window-local coordinates.
                 self.maybe_apply_window_region(&geometry);
-                ctx.send_viewport_cmd_to(overlay_id, egui::ViewportCommand::Visible(true));
-            } else {
-                match self.visibility {
-                    OverlayVisibility::Visible => {
-                        self.visibility = OverlayVisibility::FadingOut { started_at: now };
-                    }
-                    OverlayVisibility::FadingOut { started_at } => {
-                        let elapsed = now.duration_since(started_at).as_millis() as u64;
-                        if elapsed >= FADE_OUT_MS {
-                            ctx.send_viewport_cmd_to(
-                                overlay_id,
-                                egui::ViewportCommand::Visible(false),
-                            );
-                            self.visibility = OverlayVisibility::Hidden;
-                        } else {
-                            render_alpha =
-                                1.0 - (elapsed as f32 / FADE_OUT_MS as f32).clamp(0.0, 1.0);
-                        }
-                    }
-                    OverlayVisibility::Hidden => {}
+
+                if was_hidden {
+                    eprintln!(
+                        "[overlay] prepare geometry: tray_w={}, tray_h={}",
+                        geometry.width_px, geometry.height_px
+                    );
+                    eprintln!("[overlay] apply_tray_region OK");
+                    ctx.send_viewport_cmd_to(overlay_id, egui::ViewportCommand::Visible(true));
+                    ctx.request_repaint();
+                    eprintln!("[overlay] show window");
                 }
+
+                self.visibility = OverlayVisibility::Visible;
+                self.last_geometry = Some(geometry.clone());
+                self.last_win_pos = Some(win_pos);
+            } else if matches!(self.visibility, OverlayVisibility::Visible) {
+                ctx.send_viewport_cmd_to(overlay_id, egui::ViewportCommand::Visible(false));
+                self.visibility = OverlayVisibility::Hidden;
+                self.last_region_geometry = None;
+            }
+
+            if matches!(self.visibility, OverlayVisibility::Hidden) {
+                ctx.request_repaint_after(Duration::from_millis(16));
+                return;
             }
 
             let Some(geometry) = self.last_geometry.clone() else {
@@ -521,11 +493,6 @@ impl eframe::App for App {
                 ctx.request_repaint_after(Duration::from_millis(16));
                 return;
             };
-
-            if matches!(self.visibility, OverlayVisibility::Hidden) {
-                ctx.request_repaint_after(Duration::from_millis(16));
-                return;
-            }
 
             ctx.show_viewport_immediate(
                 overlay_id,
@@ -550,17 +517,13 @@ impl eframe::App for App {
                     egui::CentralPanel::default()
                         .frame(egui::Frame::none().fill(egui::Color32::WHITE))
                         .show(ctx, |ui| {
-                            if render_alpha <= 0.0 {
-                                return;
-                            }
-
                             let panel_rect = ui.available_rect_before_wrap();
                             let tray_rounding =
                                 egui::Rounding::same(TRAY_RADIUS as f32 / ctx.pixels_per_point());
                             ui.painter().rect_filled(
                                 panel_rect,
                                 tray_rounding,
-                                egui::Color32::WHITE.gamma_multiply(render_alpha),
+                                egui::Color32::WHITE,
                             );
 
                             if region_debug_bounds_enabled() {
@@ -598,9 +561,8 @@ impl eframe::App for App {
                             }
 
                             let px_scale = ctx.pixels_per_point();
-                            let pill_fill =
-                                egui::Color32::from_rgb(122, 71, 255).gamma_multiply(render_alpha);
-                            let pill_text = egui::Color32::WHITE.gamma_multiply(render_alpha);
+                            let pill_fill = egui::Color32::from_rgb(122, 71, 255);
+                            let pill_text = egui::Color32::WHITE;
 
                             for ((rect, label), font_size) in geometry
                                 .pill_rects
