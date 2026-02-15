@@ -832,13 +832,28 @@ impl eframe::App for App {
     }
 }
 
-pub fn run(rx: Receiver<InputEvent>, config: SharedConfig) -> Result<()> {
-    let options = eframe::NativeOptions {
-        viewport: egui::ViewportBuilder::default()
+pub fn run(
+    rx: Receiver<InputEvent>,
+    config: SharedConfig,
+    app_icon: Option<egui::IconData>,
+) -> Result<()> {
+    let viewport = if let Some(app_icon) = app_icon {
+        egui::ViewportBuilder::default()
             .with_inner_size([520.0, 600.0])
             .with_resizable(true)
             .with_min_inner_size([420.0, 400.0])
-            .with_transparent(true),
+            .with_transparent(true)
+            .with_icon(app_icon)
+    } else {
+        egui::ViewportBuilder::default()
+            .with_inner_size([520.0, 600.0])
+            .with_resizable(true)
+            .with_min_inner_size([420.0, 400.0])
+            .with_transparent(true)
+    };
+
+    let options = eframe::NativeOptions {
+        viewport,
         ..Default::default()
     };
 
