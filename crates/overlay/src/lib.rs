@@ -1,3 +1,4 @@
+mod mouse_icon;
 mod settings_window;
 mod theme;
 mod win_region;
@@ -13,6 +14,7 @@ use eframe::egui;
 use eframe::epaint::Rgba;
 use keyoverlay_core::{AppConfig, OverlayPosition, SharedConfig};
 use keyoverlay_input::{InputEvent, Key, MouseButton};
+use mouse_icon::{draw_mouse_icon, MouseHighlight};
 
 use win_region::{apply_test_region, apply_tray_region, PillRect};
 
@@ -29,6 +31,7 @@ const PILL_PAD_Y: i32 = 16;
 const PILL_MIN_H: i32 = 46;
 const PILL_MIN_W: i32 = 88;
 const PILL_RADIUS: i32 = 18;
+const MOUSE_ICON_TOKEN: &str = "__MOUSE_ICON__";
 
 fn ensure_windows_overlay_transparency() {}
 
@@ -41,6 +44,7 @@ struct InputState {
     mouse_icon_active: bool,
     mouse_label: Option<String>,
     pending_left_press_at: Option<Instant>,
+    pending_left_press_moved: bool,
 }
 
 impl InputState {
@@ -54,6 +58,7 @@ impl InputState {
             mouse_icon_active: false,
             mouse_label: None,
             pending_left_press_at: None,
+            pending_left_press_moved: false,
         }
     }
 
@@ -93,6 +98,7 @@ impl InputState {
 
                 if e.button == MouseButton::Left {
                     self.pending_left_press_at = Some(now);
+                    self.pending_left_press_moved = false;
                 } else {
                     self.mouse_label = Some(format!("{} Click", e.button));
                 }
@@ -105,11 +111,14 @@ impl InputState {
 
                 if e.button == MouseButton::Left {
                     if let Some(press_at) = self.pending_left_press_at {
-                        if now.duration_since(press_at) <= Duration::from_millis(250) {
+                        if !self.pending_left_press_moved
+                            && now.duration_since(press_at) <= Duration::from_millis(250)
+                        {
                             self.mouse_label = Some("Left Click".to_string());
                         }
                     }
                     self.pending_left_press_at = None;
+                    self.pending_left_press_moved = false;
                 } else {
                     self.mouse_label = Some(format!("{} Click", e.button));
                 }
@@ -124,6 +133,10 @@ impl InputState {
                 self.last_any_activity = now;
                 self.last_mouse_activity = now;
                 self.mouse_icon_active = true;
+                if self.pending_left_press_at.is_some() {
+                    self.pending_left_press_moved = true;
+                }
+                self.mouse_label = None;
             }
         }
     }
@@ -132,6 +145,7 @@ impl InputState {
         if let Some(press_at) = self.pending_left_press_at {
             if now.duration_since(press_at) > Duration::from_millis(250) {
                 self.pending_left_press_at = None;
+                self.pending_left_press_moved = false;
                 self.pressed_mouse_buttons.remove(&MouseButton::Left);
             }
         }
@@ -170,6 +184,18 @@ impl InputState {
                 .collect::<Vec<_>>()
                 .join(" + "),
         )
+    }
+
+    fn mouse_highlight(&self) -> MouseHighlight {
+        if self.pressed_mouse_buttons.contains(&MouseButton::Left) {
+            MouseHighlight::Left
+        } else if self.pressed_mouse_buttons.contains(&MouseButton::Middle) {
+            MouseHighlight::Middle
+        } else if self.pressed_mouse_buttons.contains(&MouseButton::Right) {
+            MouseHighlight::Right
+        } else {
+            MouseHighlight::None
+        }
     }
 }
 
@@ -316,7 +342,7 @@ impl App {
 
         let mut labels: Vec<(String, f32)> = Vec::new();
         if mouse_icon_visible {
-            labels.push(("🖱".to_owned(), event_font));
+            labels.push((MOUSE_ICON_TOKEN.to_owned(), event_font));
         }
         if let Some(chord) = chord {
             labels.extend(chord.split(" + ").map(|part| (part.to_owned(), chord_font)));
@@ -334,8 +360,17 @@ impl App {
 
         for (idx, (label, font_points)) in labels.into_iter().enumerate() {
             let text_size = Self::measure_text(ctx, &label, font_points);
-            let text_w_px = (text_size.x * px_scale).round() as i32;
-            let text_h_px = (text_size.y * px_scale).round() as i32;
+            let (text_w_px, text_h_px) = if label == MOUSE_ICON_TOKEN {
+                (
+                    (52.0 * px_scale).round() as i32,
+                    (68.0 * px_scale).round() as i32,
+                )
+            } else {
+                (
+                    (text_size.x * px_scale).round() as i32,
+                    (text_size.y * px_scale).round() as i32,
+                )
+            };
             let pill_w = (text_w_px + PILL_PAD_X * 2).max(PILL_MIN_W);
             let pill_h = (text_h_px + PILL_PAD_Y * 2).max(PILL_MIN_H);
 
@@ -450,6 +485,7 @@ impl eframe::App for App {
             let mouse_label_visible = self.input_state.mouse_label_visible(now);
             let chord = self.input_state.current_chord();
             let mouse_label = self.input_state.mouse_label.clone();
+            let mouse_highlight = self.input_state.mouse_highlight();
 
             let cfg = self.draft.clone();
             let visible_mouse_label = if mouse_label_visible {
@@ -500,6 +536,7 @@ impl eframe::App for App {
                     .with_mouse_passthrough(true),
                 move |ctx, _class| {
                     ensure_windows_overlay_transparency();
+                    let palette = theme::palette_for(&cfg);
 
                     let mut vis = egui::Visuals::light();
                     vis.panel_fill = egui::Color32::WHITE;
@@ -573,13 +610,23 @@ impl eframe::App for App {
                                 );
                                 let rounding = egui::Rounding::same(rect.radius as f32 / px_scale);
                                 ui.painter().rect_filled(pill_rect, rounding, pill_fill);
-                                ui.painter().text(
-                                    pill_rect.center(),
-                                    egui::Align2::CENTER_CENTER,
-                                    label,
-                                    egui::FontId::proportional(*font_size),
-                                    pill_text,
-                                );
+                                if label == MOUSE_ICON_TOKEN {
+                                    draw_mouse_icon(
+                                        ui.painter(),
+                                        pill_rect,
+                                        mouse_highlight,
+                                        1.0,
+                                        &palette,
+                                    );
+                                } else {
+                                    ui.painter().text(
+                                        pill_rect.center(),
+                                        egui::Align2::CENTER_CENTER,
+                                        label,
+                                        egui::FontId::proportional(*font_size),
+                                        pill_text,
+                                    );
+                                }
                             }
                         });
                 },

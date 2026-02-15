@@ -25,21 +25,20 @@ impl MouseHighlight {
 /// Draw a stylized mouse icon with optional button highlight.
 /// Returns the rect consumed.
 pub fn draw_mouse_icon(
-    ui: &mut egui::Ui,
+    painter: &egui::Painter,
+    rect: egui::Rect,
     highlight: MouseHighlight,
     alpha: f32,
     palette: &Palette,
-) -> egui::Rect {
-    let size = egui::vec2(48.0, 68.0);
-    let (rect, _) = ui.allocate_exact_size(size, egui::Sense::hover());
-    let painter = ui.painter();
-
+) {
     let body_color = apply_alpha(palette.mouse_body, alpha);
     let outline_color = apply_alpha(palette.mouse_outline, alpha);
     let hl_color = apply_alpha(palette.mouse_highlight, alpha);
 
     // ── Mouse body (rounded rect) ──
-    let body = egui::Rect::from_min_size(rect.min + egui::vec2(4.0, 4.0), egui::vec2(40.0, 60.0));
+    let icon_rect = egui::Rect::from_center_size(rect.center(), egui::vec2(48.0, 68.0));
+    let body =
+        egui::Rect::from_min_size(icon_rect.min + egui::vec2(4.0, 4.0), egui::vec2(40.0, 60.0));
 
     painter.rect_filled(body, 16.0, body_color);
     painter.rect_stroke(body, 16.0, egui::Stroke::new(1.5, outline_color));
@@ -130,6 +129,4 @@ pub fn draw_mouse_icon(
     // ── Scroll wheel indicator (small oval in center) ──
     let wheel_center = egui::pos2(mid_x, top_y + 14.0);
     painter.circle_stroke(wheel_center, 3.5, egui::Stroke::new(1.0, outline_color));
-
-    rect
 }
