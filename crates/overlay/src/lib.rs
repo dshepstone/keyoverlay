@@ -47,6 +47,7 @@ struct InputState {
     mouse_label: Option<String>,
     pending_left_press_at: Option<Instant>,
     pending_left_press_moved: bool,
+    last_chord: Option<String>,
 }
 
 impl InputState {
@@ -61,7 +62,23 @@ impl InputState {
             mouse_label: None,
             pending_left_press_at: None,
             pending_left_press_moved: false,
+            last_chord: None,
         }
+    }
+
+    fn refresh_last_chord_from_pressed(&mut self) {
+        if self.pressed_keys.is_empty() {
+            return;
+        }
+
+        let mut keys: Vec<Key> = self.pressed_keys.iter().copied().collect();
+        keys.sort_by_key(|k| key_sort_rank(*k));
+        self.last_chord = Some(
+            keys.into_iter()
+                .map(|k| k.to_string())
+                .collect::<Vec<_>>()
+                .join(" + "),
+        );
     }
 
     fn apply_event(&mut self, event: InputEvent) {
@@ -86,10 +103,12 @@ impl InputState {
         match event {
             InputEvent::KeyDown(e) => {
                 self.pressed_keys.insert(e.key);
+                self.refresh_last_chord_from_pressed();
                 self.last_any_activity = now;
             }
             InputEvent::KeyUp(e) => {
                 self.pressed_keys.remove(&e.key);
+                self.refresh_last_chord_from_pressed();
                 self.last_any_activity = now;
             }
             InputEvent::MouseDown(e) => {
@@ -172,20 +191,25 @@ impl InputState {
         self.mouse_label.is_some() && self.mouse_icon_visible(now)
     }
 
-    fn current_chord(&self) -> Option<String> {
-        if self.pressed_keys.is_empty() {
-            return None;
+    fn chord_for_display(&self, now: Instant) -> Option<String> {
+        if !self.pressed_keys.is_empty() {
+            let mut keys: Vec<Key> = self.pressed_keys.iter().copied().collect();
+            keys.sort_by_key(|k| key_sort_rank(*k));
+
+            return Some(
+                keys.into_iter()
+                    .map(|k| k.to_string())
+                    .collect::<Vec<_>>()
+                    .join(" + "),
+            );
         }
 
-        let mut keys: Vec<Key> = self.pressed_keys.iter().copied().collect();
-        keys.sort_by_key(|k| key_sort_rank(*k));
+        if now.duration_since(self.last_any_activity) < Duration::from_millis(OVERLAY_IDLE_HIDE_MS)
+        {
+            return self.last_chord.clone();
+        }
 
-        Some(
-            keys.into_iter()
-                .map(|k| k.to_string())
-                .collect::<Vec<_>>()
-                .join(" + "),
-        )
+        None
     }
 
     fn mouse_highlight(&self) -> MouseHighlight {
@@ -497,7 +521,7 @@ impl eframe::App for App {
             let mouse_icon_visible =
                 self.draft.show_mouse_icon && self.input_state.mouse_icon_visible(now);
             let mouse_label_visible = self.input_state.mouse_label_visible(now);
-            let chord = self.input_state.current_chord();
+            let chord = self.input_state.chord_for_display(now);
             let mouse_label = self.input_state.mouse_label.clone();
             let mouse_highlight = self.input_state.mouse_highlight();
 
