@@ -231,12 +231,9 @@ impl App {
 
 /// Padding around the content inside the rounded overlay background.
 const OVERLAY_PADDING: f32 = 10.0;
-/// Minimum overlay window dimension so the OS doesn't reject a zero-size window.
-const MIN_WIN_DIM: f32 = 4.0;
 
 impl eframe::App for App {
     fn clear_color(&self, _visuals: &egui::Visuals) -> [f32; 4] {
-        // Clear to alpha=0 so only explicitly painted widgets remain visible.
         egui::Color32::TRANSPARENT.to_normalized_gamma_f32()
     }
 
@@ -257,12 +254,16 @@ impl eframe::App for App {
         settings_window::draw_settings(ctx, self);
 
         // ── Render overlay (child viewport) ──
-        // Only show the overlay viewport when enabled AND there is something to display.
-        // When idle (no active events / no recent mouse click) the window disappears
-        // completely, just like Keystro.
+        // Only show the overlay viewport when enabled AND there is something to
+        // display.  When idle the window disappears completely (like Keystro).
         let show_overlay = self.draft.overlay_enabled && self.has_visible_content();
 
         if show_overlay {
+            // Measure content size NOW (before creating the viewport) so the
+            // window is correctly sized on the very first frame content appears.
+            let content_size = self.measure_content_size();
+            self.last_content_size = content_size;
+
             let cfg = self.draft.clone();
             let palette = Palette::from_config(&cfg);
             let events: Vec<DisplayEvent> = self.events.iter().rev().cloned().collect();
@@ -270,12 +271,8 @@ impl eframe::App for App {
             let mouse_a = self.mouse_alpha();
             let bg_opacity = cfg.background_opacity;
 
-            // Use the cached content size for this frame's window; we'll measure
-            // the actual content and store it for the next frame so the window
-            // dynamically hugs the pills / mouse icon.
-            let content_size = self.last_content_size;
-            let win_w = (content_size[0] + OVERLAY_PADDING * 2.0).max(MIN_WIN_DIM);
-            let win_h = (content_size[1] + OVERLAY_PADDING * 2.0).max(MIN_WIN_DIM);
+            let win_w = content_size[0] + OVERLAY_PADDING * 2.0;
+            let win_h = content_size[1] + OVERLAY_PADDING * 2.0;
             let win_pos = self.compute_overlay_position([win_w, win_h]);
 
             ctx.show_viewport_immediate(
@@ -292,7 +289,9 @@ impl eframe::App for App {
                 move |ctx, _class| {
                     ensure_windows_overlay_transparency();
 
-                    // Override visuals so the viewport clears to transparent.
+                    // Override visuals so the viewport clears to transparent
+                    // (prevents the settings-window dark panel_fill from
+                    // leaking into this viewport).
                     let mut vis = egui::Visuals::dark();
                     vis.panel_fill = egui::Color32::TRANSPARENT;
                     vis.window_fill = egui::Color32::TRANSPARENT;
@@ -320,9 +319,9 @@ impl eframe::App for App {
                             );
 
                             // Lay out content inside padding.
-                            let content_ui_rect = panel_rect.shrink(OVERLAY_PADDING);
+                            let content_rect = panel_rect.shrink(OVERLAY_PADDING);
                             let mut content_ui = ui.child_ui(
-                                content_ui_rect,
+                                content_rect,
                                 egui::Layout::left_to_right(egui::Align::Min),
                             );
 
@@ -357,17 +356,13 @@ impl eframe::App for App {
             );
         }
 
-        // ── Measure content size for next frame ──
-        // We estimate from the current event list so the window hugs the content.
-        self.last_content_size = self.measure_content_size();
-
         // Repaint for animations.
         ctx.request_repaint_after(std::time::Duration::from_millis(16));
     }
 }
 
 impl App {
-    /// Estimate the content size (width, height) based on current events and config.
+    /// Compute the content size (width, height) based on current events and config.
     fn measure_content_size(&self) -> [f32; 2] {
         let cfg = &self.draft;
         let now = Instant::now();
@@ -383,32 +378,25 @@ impl App {
                 continue;
             }
             // Estimate pill size: character count * approximate char width + padding.
-            let char_w = cfg.font_size * 0.6;
-            let pill_w = event.label.len() as f32 * char_w + 24.0;
-            let pill_h = cfg.font_size + 14.0;
+            let char_w = cfg.font_size * 0.65;
+            let pill_w = event.label.len() as f32 * char_w + 28.0;
+            let pill_h = cfg.font_size + 16.0;
             pills_w = pills_w.max(pill_w);
             pills_h += pill_h + 4.0; // 2px spacing top + bottom
         }
 
-        let mut total_w: f32 = 0.0;
-        let mut total_h: f32;
+        let mut total_w: f32 = pills_w;
+        let mut total_h: f32 = pills_h;
 
-        // Mouse icon is 48x68.
-        let show_mouse = cfg.show_mouse_icon && self.has_visible_content();
-        if show_mouse {
-            total_w += 48.0 + 12.0; // icon width + spacing
+        // Mouse icon is 48x68 plus 12px spacing.
+        if cfg.show_mouse_icon {
+            total_w += 48.0 + 12.0;
+            total_h = total_h.max(68.0);
         }
 
-        total_w += pills_w;
-        total_h = if show_mouse { pills_h.max(68.0) } else { pills_h };
-
-        // Ensure a minimum size when there's content.
-        if total_w < 20.0 {
-            total_w = 20.0;
-        }
-        if total_h < 20.0 {
-            total_h = 20.0;
-        }
+        // Ensure a visible minimum.
+        total_w = total_w.max(60.0);
+        total_h = total_h.max(40.0);
 
         [total_w, total_h]
     }

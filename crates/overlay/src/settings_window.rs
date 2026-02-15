@@ -290,25 +290,31 @@ fn tab_position(app: &mut App, ui: &mut egui::Ui) {
             });
     });
 
-    ui.add_space(8.0);
+    ui.add_space(12.0);
+    section_heading(ui, "Position (X / Y)");
 
-    // Show X / Y sliders when Manual positioning is selected.
-    if app.draft.position == OverlayPosition::Manual {
+    ui.horizontal(|ui| {
+        ui.label("X position:");
+        ui.add(egui::Slider::new(&mut app.draft.overlay_x, 0.0..=3840.0).suffix(" px"));
+    });
+
+    ui.horizontal(|ui| {
+        ui.label("Y position:");
+        ui.add(egui::Slider::new(&mut app.draft.overlay_y, 0.0..=2160.0).suffix(" px"));
+    });
+
+    // When the user touches X/Y sliders, auto-switch to Manual mode so the
+    // values take effect immediately without requiring a separate dropdown change.
+    if app.draft.position != OverlayPosition::Manual {
         ui.add_space(4.0);
-        section_heading(ui, "Manual Position");
-
-        ui.horizontal(|ui| {
-            ui.label("X position:");
-            ui.add(egui::Slider::new(&mut app.draft.overlay_x, 0.0..=3840.0).suffix(" px"));
-        });
-
-        ui.horizontal(|ui| {
-            ui.label("Y position:");
-            ui.add(egui::Slider::new(&mut app.draft.overlay_y, 0.0..=2160.0).suffix(" px"));
-        });
-
-        ui.add_space(4.0);
+        ui.label(
+            egui::RichText::new("Tip: select \"Manual (X/Y)\" above to use these sliders for positioning.")
+                .size(11.0)
+                .color(egui::Color32::from_rgb(140, 140, 170)),
+        );
     }
+
+    ui.add_space(12.0);
 
     ui.horizontal(|ui| {
         ui.label("Layout direction:");
