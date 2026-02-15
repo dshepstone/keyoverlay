@@ -12,3 +12,6 @@ edition = "2021"
 license = "MIT"
 rust-version = "1.74"
 repository = "https://github.com/your-org/keyoverlay"
+
+[patch.crates-io]
+egui-wgpu = { path = "vendor/egui-wgpu-0.27.2" }

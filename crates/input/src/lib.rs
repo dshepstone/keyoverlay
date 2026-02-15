@@ -280,25 +280,21 @@ impl fmt::Display for ScrollDirection {
 
 #[derive(Debug, Clone)]
 pub enum InputEvent {
-    Key(KeyEvent),
-    MouseClick(MouseClickEvent),
-    Scroll(ScrollEvent),
+    KeyDown(KeyEvent),
+    KeyUp(KeyEvent),
+    MouseDown(MouseButtonEvent),
+    MouseUp(MouseButtonEvent),
+    MouseWheel(ScrollEvent),
+    MouseMove(MouseMoveEvent),
 }
 
 impl InputEvent {
     pub fn timestamp(&self) -> Instant {
         match self {
-            InputEvent::Key(e) => e.timestamp,
-            InputEvent::MouseClick(e) => e.timestamp,
-            InputEvent::Scroll(e) => e.timestamp,
-        }
-    }
-
-    pub fn display_string(&self) -> String {
-        match self {
-            InputEvent::Key(e) => e.display_string(),
-            InputEvent::MouseClick(e) => format!("{}", e.button),
-            InputEvent::Scroll(e) => format!("{}", e.direction),
+            InputEvent::KeyDown(e) | InputEvent::KeyUp(e) => e.timestamp,
+            InputEvent::MouseDown(e) | InputEvent::MouseUp(e) => e.timestamp,
+            InputEvent::MouseWheel(e) => e.timestamp,
+            InputEvent::MouseMove(e) => e.timestamp,
         }
     }
 }
@@ -338,18 +334,37 @@ impl KeyEvent {
     }
 }
 
-// ── Mouse Click Event ────────────────────────────────────────────────────
+// ── Mouse Button Event ───────────────────────────────────────────────────
 
 #[derive(Debug, Copy, Clone, Eq, PartialEq, Hash)]
-pub struct MouseClickEvent {
+pub struct MouseButtonEvent {
     pub button: MouseButton,
     pub timestamp: Instant,
 }
 
-impl MouseClickEvent {
+impl MouseButtonEvent {
     pub fn new(button: MouseButton) -> Self {
         Self {
             button,
+            timestamp: Instant::now(),
+        }
+    }
+}
+
+// ── Mouse Move Event ─────────────────────────────────────────────────────
+
+#[derive(Debug, Copy, Clone)]
+pub struct MouseMoveEvent {
+    pub x: f64,
+    pub y: f64,
+    pub timestamp: Instant,
+}
+
+impl MouseMoveEvent {
+    pub fn new(x: f64, y: f64) -> Self {
+        Self {
+            x,
+            y,
             timestamp: Instant::now(),
         }
     }
@@ -539,28 +554,20 @@ pub fn spawn_input_listener(tx: mpsc::Sender<InputEvent>) {
                     if let Some(key) = rdev_key_to_key(rkey) {
                         if is_modifier_key(key) {
                             state.press(key);
-                        } else {
-                            let modifiers = state.as_modifiers();
-                            let ke = KeyEvent::new(key, modifiers);
-                            let _ = tx.send(InputEvent::Key(ke));
                         }
+
+                        let modifiers = state.as_modifiers();
+                        let ke = KeyEvent::new(key, modifiers);
+                        let _ = tx.send(InputEvent::KeyDown(ke));
                     }
                 }
                 EventType::KeyRelease(rkey) => {
                     if let Some(key) = rdev_key_to_key(rkey) {
+                        let modifiers = state.as_modifiers();
+                        let ke = KeyEvent::new(key, modifiers);
+                        let _ = tx.send(InputEvent::KeyUp(ke));
+
                         if is_modifier_key(key) {
-                            // If modifier was released without any other key in between,
-                            // emit it as a standalone key event.
-                            let modifiers = state.as_modifiers();
-                            // Remove this modifier from the reported modifiers
-                            let mut clean_mods = modifiers;
-                            match key {
-                                Key::Shift => clean_mods.remove(Modifiers::SHIFT),
-                                Key::Ctrl => clean_mods.remove(Modifiers::CTRL),
-                                Key::Alt => clean_mods.remove(Modifiers::ALT),
-                                Key::Win => clean_mods.remove(Modifiers::WIN),
-                                _ => {}
-                            }
                             state.release(key);
                         }
                     }
@@ -573,7 +580,18 @@ pub fn spawn_input_listener(tx: mpsc::Sender<InputEvent>) {
                         _ => None,
                     };
                     if let Some(b) = button {
-                        let _ = tx.send(InputEvent::MouseClick(MouseClickEvent::new(b)));
+                        let _ = tx.send(InputEvent::MouseDown(MouseButtonEvent::new(b)));
+                    }
+                }
+                EventType::ButtonRelease(btn) => {
+                    let button = match btn {
+                        rdev::Button::Left => Some(MouseButton::Left),
+                        rdev::Button::Right => Some(MouseButton::Right),
+                        rdev::Button::Middle => Some(MouseButton::Middle),
+                        _ => None,
+                    };
+                    if let Some(b) = button {
+                        let _ = tx.send(InputEvent::MouseUp(MouseButtonEvent::new(b)));
                     }
                 }
                 EventType::Wheel { delta_y, .. } => {
@@ -584,7 +602,10 @@ pub fn spawn_input_listener(tx: mpsc::Sender<InputEvent>) {
                     } else {
                         return;
                     };
-                    let _ = tx.send(InputEvent::Scroll(ScrollEvent::new(direction)));
+                    let _ = tx.send(InputEvent::MouseWheel(ScrollEvent::new(direction)));
+                }
+                EventType::MouseMove { x, y } => {
+                    let _ = tx.send(InputEvent::MouseMove(MouseMoveEvent::new(x, y)));
                 }
                 _ => {}
             }
