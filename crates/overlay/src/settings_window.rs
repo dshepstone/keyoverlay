@@ -4,6 +4,22 @@ use keyoverlay_core::{OverlayLayout, OverlayPosition, Theme};
 use crate::theme::{c2e, e2c};
 use crate::App;
 
+const DISPLAY_PRESETS: &[(f32, f32, &str)] = &[
+    (1920.0, 1080.0, "1920 x 1080"),
+    (2560.0, 1440.0, "2560 x 1440"),
+    (3840.0, 2160.0, "3840 x 2160"),
+    (1600.0, 900.0, "1600 x 900"),
+    (1366.0, 768.0, "1366 x 768"),
+];
+
+const SCALE_PRESETS: &[(f32, &str)] = &[
+    (1.0, "100%"),
+    (1.25, "125%"),
+    (1.5, "150%"),
+    (1.75, "175%"),
+    (2.0, "200%"),
+];
+
 // ── Settings Tabs ────────────────────────────────────────────────────────
 
 #[derive(Clone, Copy, PartialEq, Eq)]
@@ -291,30 +307,97 @@ fn tab_behavior(app: &mut App, ui: &mut egui::Ui) {
 }
 
 fn tab_position(app: &mut App, ui: &mut egui::Ui) {
+    section_heading(ui, "Display Baseline");
+
+    let mut resolution_changed = false;
+    let mut scale_changed = false;
+
+    ui.horizontal(|ui| {
+        ui.label("Display resolution:");
+        let selected_resolution = DISPLAY_PRESETS
+            .iter()
+            .find(|(w, h, _)| {
+                (app.draft.display_width_px - *w).abs() < f32::EPSILON
+                    && (app.draft.display_height_px - *h).abs() < f32::EPSILON
+            })
+            .map(|(_, _, label)| *label)
+            .unwrap_or("Custom");
+
+        egui::ComboBox::from_id_source("display_resolution_combo")
+            .selected_text(selected_resolution)
+            .show_ui(ui, |ui| {
+                for (w, h, label) in DISPLAY_PRESETS {
+                    let selected = (app.draft.display_width_px - *w).abs() < f32::EPSILON
+                        && (app.draft.display_height_px - *h).abs() < f32::EPSILON;
+                    if ui.selectable_label(selected, *label).clicked() {
+                        app.draft.display_width_px = *w;
+                        app.draft.display_height_px = *h;
+                        resolution_changed = true;
+                    }
+                }
+            });
+    });
+
+    ui.horizontal(|ui| {
+        ui.label("Display scale:");
+        let selected_scale = SCALE_PRESETS
+            .iter()
+            .find(|(scale, _)| (app.draft.display_scale - *scale).abs() < f32::EPSILON)
+            .map(|(_, label)| *label)
+            .unwrap_or("Custom");
+
+        egui::ComboBox::from_id_source("display_scale_combo")
+            .selected_text(selected_scale)
+            .show_ui(ui, |ui| {
+                for (scale, label) in SCALE_PRESETS {
+                    let selected = (app.draft.display_scale - *scale).abs() < f32::EPSILON;
+                    if ui.selectable_label(selected, *label).clicked() {
+                        app.draft.display_scale = *scale;
+                        scale_changed = true;
+                    }
+                }
+            });
+    });
+
+    if (resolution_changed || scale_changed) && app.draft.position == OverlayPosition::Manual {
+        app.sync_manual_to_lower_right();
+    }
+
+    ui.add_space(12.0);
     section_heading(ui, "Screen Position");
 
     ui.horizontal(|ui| {
         ui.label("Overlay position:");
+        let mut selected_position = app.draft.position;
         egui::ComboBox::from_id_source("position_combo")
-            .selected_text(app.draft.position.label())
+            .selected_text(selected_position.label())
             .show_ui(ui, |ui: &mut egui::Ui| {
                 for pos in OverlayPosition::ALL {
-                    ui.selectable_value(&mut app.draft.position, pos, pos.label());
+                    ui.selectable_value(&mut selected_position, pos, pos.label());
                 }
             });
+
+        if selected_position != app.draft.position {
+            app.draft.position = selected_position;
+            if app.draft.position == OverlayPosition::Manual {
+                app.sync_manual_to_lower_right();
+            }
+        }
     });
 
     ui.add_space(12.0);
     section_heading(ui, "Position (X / Y)");
 
+    let [display_w, display_h] = app.draft.scaled_display_size_points();
+
     ui.horizontal(|ui| {
         ui.label("X position:");
-        ui.add(egui::Slider::new(&mut app.draft.overlay_x, 0.0..=3840.0).suffix(" px"));
+        ui.add(egui::Slider::new(&mut app.draft.overlay_x, 0.0..=display_w).suffix(" px"));
     });
 
     ui.horizontal(|ui| {
         ui.label("Y position:");
-        ui.add(egui::Slider::new(&mut app.draft.overlay_y, 0.0..=2160.0).suffix(" px"));
+        ui.add(egui::Slider::new(&mut app.draft.overlay_y, 0.0..=display_h).suffix(" px"));
     });
 
     // When the user touches X/Y sliders, auto-switch to Manual mode so the
@@ -328,6 +411,8 @@ fn tab_position(app: &mut App, ui: &mut egui::Ui) {
             .size(11.0)
             .color(egui::Color32::from_rgb(140, 140, 170)),
         );
+    } else if ui.button("Snap manual position to lower-right").clicked() {
+        app.sync_manual_to_lower_right();
     }
 
     ui.add_space(12.0);

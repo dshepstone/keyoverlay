@@ -342,6 +342,14 @@ impl App {
         if draft.font_size < 26.0 {
             draft.font_size = 26.0;
         }
+        if draft.position == OverlayPosition::Manual
+            && (draft.overlay_x - 500.0).abs() < f32::EPSILON
+            && (draft.overlay_y - 500.0).abs() < f32::EPSILON
+        {
+            let (x, y) = draft.manual_lower_right_position();
+            draft.overlay_x = x;
+            draft.overlay_y = y;
+        }
 
         Self {
             config,
@@ -373,14 +381,19 @@ impl App {
         self.apply();
     }
 
-    fn compute_overlay_position(&self, win_size: [f32; 2], screen: [f32; 2]) -> egui::Pos2 {
+    fn sync_manual_to_lower_right(&mut self) {
+        let (x, y) = self.draft.manual_lower_right_position();
+        self.draft.overlay_x = x;
+        self.draft.overlay_y = y;
+    }
+
+    fn compute_overlay_position(&self, win_size: [f32; 2], _screen: [f32; 2]) -> egui::Pos2 {
         let cfg = &self.draft;
         if cfg.position == OverlayPosition::Manual {
             return egui::pos2(cfg.overlay_x, cfg.overlay_y);
         }
 
-        let sw = screen[0];
-        let sh = screen[1];
+        let [sw, sh] = cfg.scaled_display_size_points();
         let w = win_size[0];
         let h = win_size[1];
         let mx = cfg.margin_x;

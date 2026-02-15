@@ -69,12 +69,24 @@ fn default_show_mouse_event_text() -> bool {
     true
 }
 
+fn default_display_width_px() -> f32 {
+    1920.0
+}
+
+fn default_display_height_px() -> f32 {
+    1080.0
+}
+
+fn default_display_scale() -> f32 {
+    1.25
+}
+
 fn default_overlay_x() -> f32 {
-    500.0
+    1216.0
 }
 
 fn default_overlay_y() -> f32 {
-    500.0
+    604.0
 }
 
 // ── Overlay Layout ───────────────────────────────────────────────────────
@@ -163,6 +175,14 @@ pub struct AppConfig {
     pub overlay_width: f32,
     pub overlay_height: f32,
 
+    // Display baseline used to compute preset and manual positions.
+    #[serde(default = "default_display_width_px")]
+    pub display_width_px: f32,
+    #[serde(default = "default_display_height_px")]
+    pub display_height_px: f32,
+    #[serde(default = "default_display_scale")]
+    pub display_scale: f32,
+
     // Manual pixel position (used when position == Manual).
     #[serde(default = "default_overlay_x")]
     pub overlay_x: f32,
@@ -205,13 +225,32 @@ impl Default for AppConfig {
             margin_y: 60.0,
             overlay_width: 280.0,
             overlay_height: 200.0,
-            overlay_x: 500.0,
-            overlay_y: 500.0,
+            display_width_px: 1920.0,
+            display_height_px: 1080.0,
+            display_scale: 1.25,
+            overlay_x: 1216.0,
+            overlay_y: 604.0,
         }
     }
 }
 
 impl AppConfig {
+    pub fn scaled_display_size_points(&self) -> [f32; 2] {
+        let scale = self.display_scale.max(1.0);
+        [
+            (self.display_width_px / scale).max(1.0),
+            (self.display_height_px / scale).max(1.0),
+        ]
+    }
+
+    pub fn manual_lower_right_position(&self) -> (f32, f32) {
+        let [sw, sh] = self.scaled_display_size_points();
+        (
+            (sw - self.overlay_width - self.margin_x).max(0.0),
+            (sh - self.overlay_height - self.margin_y).max(0.0),
+        )
+    }
+
     fn config_path() -> Option<PathBuf> {
         dirs::config_dir().map(|d| d.join("keyoverlay").join("config.json"))
     }
