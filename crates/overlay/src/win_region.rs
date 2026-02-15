@@ -112,7 +112,7 @@ mod imp {
         union_bounds.2 = union_bounds.2.max(first.x + first.w + radius_pad_px);
         union_bounds.3 = union_bounds.3.max(first.y + first.h + radius_pad_px);
 
-        let mut accum = make_round_region(first);
+        let accum = make_round_region(first);
         if accum.is_null() {
             let err = unsafe { GetLastError() };
             eprintln!("[overlay-region] CreateRoundRectRgn(first) failed err={err}");

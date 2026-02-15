@@ -607,7 +607,6 @@ pub fn spawn_input_listener(tx: mpsc::Sender<InputEvent>) {
                 EventType::MouseMove { x, y } => {
                     let _ = tx.send(InputEvent::MouseMove(MouseMoveEvent::new(x, y)));
                 }
-                _ => {}
             }
         };
 

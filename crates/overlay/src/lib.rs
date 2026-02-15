@@ -147,6 +147,19 @@ fn region_debug_bounds_enabled() -> bool {
     *ENABLED.get_or_init(|| env::var("REGION_DEBUG_BOUNDS").is_ok_and(|v| v == "1"))
 }
 
+fn paint_rect_stroke_inside(
+    ui: &egui::Ui,
+    rect: egui::Rect,
+    rounding: egui::Rounding,
+    stroke: egui::Stroke,
+) {
+    // egui 0.27.2: rect_stroke(rect, rounding, stroke)
+    // Emulate "inside stroke" by shrinking half the stroke width
+    let inset = stroke.width * 0.5;
+    let r = rect.shrink(inset);
+    ui.painter().rect_stroke(r, rounding, stroke);
+}
+
 struct App {
     config: SharedConfig,
     draft: AppConfig,
@@ -557,15 +570,19 @@ impl eframe::App for App {
                                 .rect_filled(panel_rect, cfg.pill_rounding + 6.0, bg_color);
 
                             if region_debug_bounds_enabled() {
-                                let debug_stroke =
-                                    egui::Stroke::new(1.0, egui::Color32::from_rgb(255, 0, 255));
-                                ui.painter().rect_stroke(
+                                let window_debug_stroke =
+                                    egui::Stroke::new(1.0, egui::Color32::from_rgb(0, 255, 0));
+                                let rounding = egui::Rounding::same(0.0);
+                                paint_rect_stroke_inside(
+                                    ui,
                                     panel_rect,
-                                    0.0,
-                                    debug_stroke,
-                                    egui::StrokeKind::Inside,
+                                    rounding,
+                                    window_debug_stroke,
                                 );
 
+                                let pill_debug_stroke =
+                                    egui::Stroke::new(1.0, egui::Color32::from_rgb(255, 0, 255));
+                                let rounding = egui::Rounding::same(0.0);
                                 let px_scale = ctx.pixels_per_point();
                                 for rect in &geometry.pill_rects {
                                     let min = egui::pos2(
@@ -576,14 +593,12 @@ impl eframe::App for App {
                                         rect.w as f32 / px_scale,
                                         rect.h as f32 / px_scale,
                                     );
-                                    ui.painter().rect_stroke(
-                                        egui::Rect::from_min_size(min, size),
-                                        0.0,
-                                        egui::Stroke::new(
-                                            1.0,
-                                            egui::Color32::from_rgb(0, 255, 255),
-                                        ),
-                                        egui::StrokeKind::Inside,
+                                    let pill_rect = egui::Rect::from_min_size(min, size);
+                                    paint_rect_stroke_inside(
+                                        ui,
+                                        pill_rect,
+                                        rounding,
+                                        pill_debug_stroke,
                                     );
                                 }
                             }
