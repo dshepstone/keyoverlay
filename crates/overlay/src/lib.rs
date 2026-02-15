@@ -21,8 +21,6 @@ use win_region::{
 };
 
 const OVERLAY_VIEWPORT_TITLE: &str = "KeyOverlayOverlay";
-const OVERLAY_IDLE_HIDE_MS: u64 = 700;
-const MOUSE_ICON_IDLE_HIDE_MS: u64 = 450;
 const LARGE_KEY_FONT_BOOST: f32 = 14.0;
 const GAP_BETWEEN_PILLS: i32 = 10;
 const TRAY_PAD_X: i32 = 22;
@@ -41,11 +39,11 @@ fn ensure_windows_overlay_transparency() {}
 struct InputState {
     pressed_keys: HashSet<Key>,
     pressed_mouse_buttons: HashSet<MouseButton>,
-    last_any_activity: Instant,
     last_key_activity: Instant,
     last_mouse_activity: Instant,
     mouse_icon_active: bool,
     mouse_label: Option<String>,
+    last_mouse_was_scroll: bool,
     pending_left_press_at: Option<Instant>,
     pending_left_press_moved: bool,
     last_chord: Option<String>,
@@ -58,11 +56,11 @@ impl InputState {
         Self {
             pressed_keys: HashSet::new(),
             pressed_mouse_buttons: HashSet::new(),
-            last_any_activity: now,
             last_key_activity: now,
             last_mouse_activity: now,
             mouse_icon_active: false,
             mouse_label: None,
+            last_mouse_was_scroll: false,
             pending_left_press_at: None,
             pending_left_press_moved: false,
             last_chord: None,
@@ -108,19 +106,16 @@ impl InputState {
             InputEvent::KeyDown(e) => {
                 self.pressed_keys.insert(e.key);
                 self.refresh_last_chord_from_pressed();
-                self.last_any_activity = now;
                 self.last_key_activity = now;
             }
             InputEvent::KeyUp(e) => {
                 self.pressed_keys.remove(&e.key);
                 self.refresh_last_chord_from_pressed();
-                self.last_any_activity = now;
                 self.last_key_activity = now;
             }
             InputEvent::MouseDown(e) => {
                 self.pressed_mouse_buttons.insert(e.button);
                 self.mouse_label = None;
-                self.last_any_activity = now;
                 self.last_mouse_activity = now;
                 self.mouse_icon_active = true;
                 self.last_mouse_highlight = MouseHighlight::from_button(e.button);
@@ -129,12 +124,12 @@ impl InputState {
                     self.pending_left_press_at = Some(now);
                     self.pending_left_press_moved = false;
                 } else {
+                    self.last_mouse_was_scroll = false;
                     self.mouse_label = Some(format!("{} Click", e.button));
                 }
             }
             InputEvent::MouseUp(e) => {
                 self.pressed_mouse_buttons.remove(&e.button);
-                self.last_any_activity = now;
                 self.last_mouse_activity = now;
                 self.mouse_icon_active = true;
                 self.last_mouse_highlight = MouseHighlight::from_button(e.button);
@@ -144,24 +139,28 @@ impl InputState {
                         if !self.pending_left_press_moved
                             && now.duration_since(press_at) <= Duration::from_millis(250)
                         {
+                            self.last_mouse_was_scroll = false;
                             self.mouse_label = Some("Left Click".to_string());
                         } else {
+                            self.last_mouse_was_scroll = false;
                             self.mouse_label = None;
                         }
                     } else {
+                        self.last_mouse_was_scroll = false;
                         self.mouse_label = None;
                     }
                     self.pending_left_press_at = None;
                     self.pending_left_press_moved = false;
                 } else {
+                    self.last_mouse_was_scroll = false;
                     self.mouse_label = Some(format!("{} Click", e.button));
                 }
             }
             InputEvent::MouseWheel(_) => {
-                self.last_any_activity = now;
                 self.last_mouse_activity = now;
                 self.mouse_icon_active = true;
                 self.last_mouse_highlight = MouseHighlight::None;
+                self.last_mouse_was_scroll = true;
                 self.mouse_label = Some("Scroll".to_string());
             }
             InputEvent::MouseMove(_) => {
@@ -172,8 +171,8 @@ impl InputState {
         }
     }
 
-    fn tick(&mut self, now: Instant) {
-        if !self.mouse_icon_visible(now) {
+    fn tick(&mut self, now: Instant, mouse_hold_for: Duration) {
+        if !self.mouse_icon_visible(now, mouse_hold_for) {
             self.last_mouse_highlight = MouseHighlight::None;
         }
 
@@ -186,26 +185,59 @@ impl InputState {
         }
     }
 
-    fn overlay_visible(&self, now: Instant) -> bool {
-        if !self.pressed_keys.is_empty() || !self.pressed_mouse_buttons.is_empty() {
-            return true;
+    fn overlay_visible(
+        &self,
+        now: Instant,
+        hold_for: Duration,
+        keyboard_enabled: bool,
+        mouse_enabled: bool,
+    ) -> bool {
+        let keyboard_active = keyboard_enabled
+            && (!self.pressed_keys.is_empty()
+                || now.duration_since(self.last_key_activity) < hold_for);
+        let mouse_active = mouse_enabled
+            && (!self.pressed_mouse_buttons.is_empty()
+                || (self.mouse_icon_active
+                    && now.duration_since(self.last_mouse_activity) < hold_for));
+
+        keyboard_active || mouse_active
+    }
+
+    fn mouse_icon_visible(&self, now: Instant, hold_for: Duration) -> bool {
+        self.mouse_icon_active && now.duration_since(self.last_mouse_activity) < hold_for
+    }
+
+    fn mouse_label_for_display(
+        &self,
+        now: Instant,
+        hold_for: Duration,
+        show_mouse_clicks: bool,
+        show_scroll: bool,
+    ) -> Option<String> {
+        if !self.mouse_icon_visible(now, hold_for) {
+            return None;
         }
-        now.duration_since(self.last_any_activity) < Duration::from_millis(OVERLAY_IDLE_HIDE_MS)
-    }
 
-    fn mouse_icon_visible(&self, now: Instant) -> bool {
-        if !self.mouse_icon_active {
-            return false;
+        if self.last_mouse_was_scroll && !show_scroll {
+            return None;
         }
-        now.duration_since(self.last_mouse_activity)
-            < Duration::from_millis(MOUSE_ICON_IDLE_HIDE_MS)
+        if !self.last_mouse_was_scroll && !show_mouse_clicks {
+            return None;
+        }
+
+        self.mouse_label.clone()
     }
 
-    fn mouse_label_visible(&self, now: Instant) -> bool {
-        self.mouse_label.is_some() && self.mouse_icon_visible(now)
-    }
+    fn chord_for_display(
+        &self,
+        now: Instant,
+        hold_for: Duration,
+        show_keyboard: bool,
+    ) -> Option<String> {
+        if !show_keyboard {
+            return None;
+        }
 
-    fn chord_for_display(&self, now: Instant) -> Option<String> {
         if !self.pressed_keys.is_empty() {
             let mut keys: Vec<Key> = self.pressed_keys.iter().copied().collect();
             keys.sort_by_key(|k| key_sort_rank(*k));
@@ -218,22 +250,21 @@ impl InputState {
             );
         }
 
-        if now.duration_since(self.last_key_activity) < Duration::from_millis(OVERLAY_IDLE_HIDE_MS)
-        {
+        if now.duration_since(self.last_key_activity) < hold_for {
             return self.last_chord.clone();
         }
 
         None
     }
 
-    fn mouse_highlight(&self, now: Instant) -> MouseHighlight {
+    fn mouse_highlight(&self, now: Instant, hold_for: Duration) -> MouseHighlight {
         if self.pressed_mouse_buttons.contains(&MouseButton::Left) {
             MouseHighlight::Left
         } else if self.pressed_mouse_buttons.contains(&MouseButton::Middle) {
             MouseHighlight::Middle
         } else if self.pressed_mouse_buttons.contains(&MouseButton::Right) {
             MouseHighlight::Right
-        } else if self.mouse_icon_visible(now) {
+        } else if self.mouse_icon_visible(now, hold_for) {
             self.last_mouse_highlight
         } else {
             MouseHighlight::None
@@ -531,22 +562,37 @@ impl eframe::App for App {
 
         if self.draft.overlay_enabled {
             let now = Instant::now();
-            self.input_state.tick(now);
+            let overlay_hold_for = Duration::from_secs_f32(
+                (self.draft.display_duration_secs + self.draft.fade_duration_secs).max(0.1),
+            );
+            let mouse_hold_for = overlay_hold_for;
+            let mouse_events_enabled = self.draft.show_mouse_clicks
+                || self.draft.show_scroll
+                || self.draft.show_mouse_icon;
 
-            let overlay_visible = self.input_state.overlay_visible(now);
-            let mouse_icon_visible =
-                self.draft.show_mouse_icon && self.input_state.mouse_icon_visible(now);
-            let mouse_label_visible = self.input_state.mouse_label_visible(now);
-            let chord = self.input_state.chord_for_display(now);
-            let mouse_label = self.input_state.mouse_label.clone();
-            let mouse_highlight = self.input_state.mouse_highlight(now);
+            self.input_state.tick(now, mouse_hold_for);
+
+            let overlay_visible = self.input_state.overlay_visible(
+                now,
+                overlay_hold_for,
+                self.draft.show_keyboard,
+                mouse_events_enabled,
+            );
+            let mouse_icon_visible = self.draft.show_mouse_icon
+                && self.input_state.mouse_icon_visible(now, mouse_hold_for);
+            let chord =
+                self.input_state
+                    .chord_for_display(now, overlay_hold_for, self.draft.show_keyboard);
+            let mouse_label = self.input_state.mouse_label_for_display(
+                now,
+                mouse_hold_for,
+                self.draft.show_mouse_clicks,
+                self.draft.show_scroll,
+            );
+            let mouse_highlight = self.input_state.mouse_highlight(now, mouse_hold_for);
 
             let cfg = self.draft.clone();
-            let visible_mouse_label = if mouse_label_visible {
-                mouse_label.as_deref()
-            } else {
-                None
-            };
+            let visible_mouse_label = mouse_label.as_deref();
             let geometry = self.build_overlay_geometry(
                 ctx,
                 chord.as_deref(),
