@@ -17,7 +17,6 @@ use keyoverlay_input::{InputEvent, Key, MouseButton};
 use win_region::{apply_test_region, apply_tray_region, PillRect};
 
 const OVERLAY_VIEWPORT_TITLE: &str = "KeyOverlayOverlay";
-const OVERLAY_IDLE_HIDE_MS: u64 = 700;
 const MOUSE_ICON_IDLE_HIDE_MS: u64 = 450;
 const LARGE_KEY_FONT_BOOST: f32 = 14.0;
 const GAP_BETWEEN_PILLS: i32 = 10;
@@ -137,13 +136,6 @@ impl InputState {
         }
     }
 
-    fn overlay_visible(&self, now: Instant) -> bool {
-        if !self.pressed_keys.is_empty() || !self.pressed_mouse_buttons.is_empty() {
-            return true;
-        }
-        now.duration_since(self.last_any_activity) < Duration::from_millis(OVERLAY_IDLE_HIDE_MS)
-    }
-
     fn mouse_icon_visible(&self, now: Instant) -> bool {
         if !self.mouse_icon_active {
             return false;
@@ -226,9 +218,17 @@ struct App {
     rx: Receiver<InputEvent>,
     input_state: InputState,
     screen_size: [f32; 2],
+    visibility: OverlayVisibility,
+    last_geometry: Option<OverlayGeometry>,
+    last_win_pos: Option<egui::Pos2>,
     last_region_geometry: Option<OverlayGeometry>,
     region_test_applied: bool,
     last_hwnd: Option<isize>,
+}
+
+enum OverlayVisibility {
+    Hidden,
+    Visible,
 }
 
 impl App {
@@ -246,6 +246,9 @@ impl App {
             rx,
             input_state: InputState::new(),
             screen_size: [1920.0, 1080.0],
+            visibility: OverlayVisibility::Hidden,
+            last_geometry: None,
+            last_win_pos: None,
             last_region_geometry: None,
             region_test_applied: false,
             last_hwnd: None,
@@ -267,29 +270,14 @@ impl App {
         self.apply();
     }
 
-    fn compute_overlay_position(&self, win_size: [f32; 2], screen: [f32; 2]) -> egui::Pos2 {
+    fn compute_overlay_origin(&self, _screen: [f32; 2]) -> egui::Pos2 {
         let cfg = &self.draft;
         if cfg.position == OverlayPosition::Manual {
             return egui::pos2(cfg.overlay_x, cfg.overlay_y);
         }
 
-        let sw = screen[0];
-        let sh = screen[1];
-        let w = win_size[0];
-        let h = win_size[1];
-        let mx = cfg.margin_x;
-        let my = cfg.margin_y;
-
-        match cfg.position {
-            OverlayPosition::BottomCenter => egui::pos2((sw - w) / 2.0, sh - h - my),
-            OverlayPosition::BottomLeft => egui::pos2(mx, sh - h - my),
-            OverlayPosition::BottomRight => egui::pos2(sw - w - mx, sh - h - my),
-            OverlayPosition::TopCenter => egui::pos2((sw - w) / 2.0, my),
-            OverlayPosition::TopLeft => egui::pos2(mx, my),
-            OverlayPosition::TopRight => egui::pos2(sw - w - mx, my),
-            OverlayPosition::Center => egui::pos2((sw - w) / 2.0, (sh - h) / 2.0),
-            OverlayPosition::Manual => egui::pos2(cfg.overlay_x, cfg.overlay_y),
-        }
+        // Keep a fixed anchor that does not depend on the current overlay size.
+        egui::pos2(cfg.margin_x, cfg.margin_y)
     }
 
     fn measure_text(ctx: &egui::Context, text: &str, font_size: f32) -> egui::Vec2 {
@@ -309,7 +297,7 @@ impl App {
         chord: Option<&str>,
         mouse_icon_visible: bool,
         mouse_label: Option<&str>,
-    ) -> OverlayGeometry {
+    ) -> Option<OverlayGeometry> {
         let px_scale: f32 = ctx.pixels_per_point();
         let chord_font: f32 = self.draft.font_size + LARGE_KEY_FONT_BOOST;
         let event_font: f32 = self.draft.font_size + 4.0;
@@ -357,17 +345,7 @@ impl App {
         }
 
         if pill_rects.is_empty() {
-            let width_px = (220.0 * px_scale).round() as i32;
-            let height_px = (76.0 * px_scale).round() as i32;
-            return OverlayGeometry {
-                width_px,
-                height_px,
-                width_points: width_px as f32 / px_scale,
-                height_points: height_px as f32 / px_scale,
-                pill_rects,
-                pill_labels,
-                pill_font_sizes,
-            };
+            return None;
         }
 
         let content_w_px = pill_rects.last().map(|r| r.x + r.w).unwrap_or(0);
@@ -381,7 +359,7 @@ impl App {
             rect.y = content_origin_y + (content_h_px - rect.h) / 2;
         }
 
-        OverlayGeometry {
+        Some(OverlayGeometry {
             width_px: tray_w,
             height_px: tray_h,
             width_points: tray_w as f32 / px_scale,
@@ -389,7 +367,7 @@ impl App {
             pill_rects,
             pill_labels,
             pill_font_sizes,
-        }
+        })
     }
 
     fn maybe_apply_window_region(&mut self, geometry: &OverlayGeometry) {
@@ -444,36 +422,34 @@ impl eframe::App for App {
             let now = Instant::now();
             self.input_state.tick(now);
 
-            let overlay_visible = self.input_state.overlay_visible(now);
             let mouse_icon_visible =
                 self.draft.show_mouse_icon && self.input_state.mouse_icon_visible(now);
             let mouse_label_visible = self.input_state.mouse_label_visible(now);
             let chord = self.input_state.current_chord();
             let mouse_label = self.input_state.mouse_label.clone();
-
-            let cfg = self.draft.clone();
             let visible_mouse_label = if mouse_label_visible {
                 mouse_label.as_deref()
             } else {
                 None
             };
-            let geometry = self.build_overlay_geometry(
-                ctx,
-                chord.as_deref(),
-                mouse_icon_visible,
-                visible_mouse_label,
-            );
-
-            let win_pos = self.compute_overlay_position(
-                [geometry.width_points, geometry.height_points],
-                self.screen_size,
-            );
+            let has_content =
+                chord.is_some() || mouse_icon_visible || visible_mouse_label.is_some();
             let overlay_id = egui::ViewportId::from_hash_of("overlay");
 
-            if !overlay_visible {
-                ctx.send_viewport_cmd_to(overlay_id, egui::ViewportCommand::Visible(false));
-                self.last_region_geometry = None;
-            } else {
+            if has_content {
+                let Some(geometry) = self.build_overlay_geometry(
+                    ctx,
+                    chord.as_deref(),
+                    mouse_icon_visible,
+                    visible_mouse_label,
+                ) else {
+                    ctx.request_repaint_after(Duration::from_millis(16));
+                    return;
+                };
+                let win_pos = self.compute_overlay_origin(self.screen_size);
+                let was_hidden = matches!(self.visibility, OverlayVisibility::Hidden);
+
+                // Resize/reposition first, then apply region in window-local coordinates.
                 ctx.send_viewport_cmd_to(
                     overlay_id,
                     egui::ViewportCommand::InnerSize(egui::vec2(
@@ -482,10 +458,41 @@ impl eframe::App for App {
                     )),
                 );
                 ctx.send_viewport_cmd_to(overlay_id, egui::ViewportCommand::OuterPosition(win_pos));
-                // Resize/reposition first, then apply region in window-local coordinates.
                 self.maybe_apply_window_region(&geometry);
-                ctx.send_viewport_cmd_to(overlay_id, egui::ViewportCommand::Visible(true));
+
+                if was_hidden {
+                    eprintln!(
+                        "[overlay] prepare geometry: tray_w={}, tray_h={}",
+                        geometry.width_px, geometry.height_px
+                    );
+                    eprintln!("[overlay] apply_tray_region OK");
+                    ctx.send_viewport_cmd_to(overlay_id, egui::ViewportCommand::Visible(true));
+                    ctx.request_repaint();
+                    eprintln!("[overlay] show window");
+                }
+
+                self.visibility = OverlayVisibility::Visible;
+                self.last_geometry = Some(geometry.clone());
+                self.last_win_pos = Some(win_pos);
+            } else if matches!(self.visibility, OverlayVisibility::Visible) {
+                ctx.send_viewport_cmd_to(overlay_id, egui::ViewportCommand::Visible(false));
+                self.visibility = OverlayVisibility::Hidden;
+                self.last_region_geometry = None;
             }
+
+            if matches!(self.visibility, OverlayVisibility::Hidden) {
+                ctx.request_repaint_after(Duration::from_millis(16));
+                return;
+            }
+
+            let Some(geometry) = self.last_geometry.clone() else {
+                ctx.request_repaint_after(Duration::from_millis(16));
+                return;
+            };
+            let Some(win_pos) = self.last_win_pos else {
+                ctx.request_repaint_after(Duration::from_millis(16));
+                return;
+            };
 
             ctx.show_viewport_immediate(
                 overlay_id,
@@ -510,10 +517,6 @@ impl eframe::App for App {
                     egui::CentralPanel::default()
                         .frame(egui::Frame::none().fill(egui::Color32::WHITE))
                         .show(ctx, |ui| {
-                            if !overlay_visible {
-                                return;
-                            }
-
                             let panel_rect = ui.available_rect_before_wrap();
                             let tray_rounding =
                                 egui::Rounding::same(TRAY_RADIUS as f32 / ctx.pixels_per_point());
