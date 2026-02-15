@@ -89,6 +89,10 @@ fn default_overlay_y() -> f32 {
     604.0
 }
 
+fn default_overlay_scale() -> f32 {
+    1.0
+}
+
 // ── Overlay Layout ───────────────────────────────────────────────────────
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
@@ -142,6 +146,8 @@ pub struct AppConfig {
     pub overlay_opacity: f32,
     pub background_opacity: f32,
     pub pill_rounding: f32,
+    #[serde(default = "default_overlay_scale")]
+    pub overlay_scale: f32,
 
     // Custom theme colors (used when theme == Custom).
     pub custom_key_bg: Color,
@@ -198,6 +204,7 @@ impl Default for AppConfig {
             overlay_opacity: 1.0,
             background_opacity: 0.7,
             pill_rounding: 8.0,
+            overlay_scale: 1.0,
 
             custom_key_bg: Color::rgb(55, 55, 75),
             custom_key_fg: Color::rgb(240, 240, 250),

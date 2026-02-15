@@ -393,6 +393,7 @@ impl App {
         if draft.font_size < 26.0 {
             draft.font_size = 26.0;
         }
+        draft.overlay_scale = draft.overlay_scale.clamp(0.6, 2.0);
         if draft.position == OverlayPosition::Manual
             && (draft.overlay_x - 500.0).abs() < f32::EPSILON
             && (draft.overlay_y - 500.0).abs() < f32::EPSILON
@@ -422,6 +423,7 @@ impl App {
         if self.draft.font_size < 26.0 {
             self.draft.font_size = 26.0;
         }
+        self.draft.overlay_scale = self.draft.overlay_scale.clamp(0.6, 2.0);
         *self.config.lock().unwrap() = self.draft.clone();
         self.draft.save();
         self.status_msg = Some(("Settings saved.".into(), Instant::now()));
@@ -430,6 +432,7 @@ impl App {
     fn reset_defaults(&mut self) {
         self.draft = AppConfig::default();
         self.draft.font_size = 26.0;
+        self.draft.overlay_scale = self.draft.overlay_scale.clamp(0.6, 2.0);
         self.apply();
     }
 
@@ -486,8 +489,11 @@ impl App {
         mouse_label: Option<&str>,
     ) -> OverlayGeometry {
         let px_scale: f32 = ctx.pixels_per_point();
-        let chord_font: f32 = self.draft.font_size + LARGE_KEY_FONT_BOOST;
-        let event_font: f32 = self.draft.font_size + 4.0;
+        let overlay_scale = self.draft.overlay_scale.clamp(0.6, 2.0);
+        let scaled_px = |value: i32| ((value as f32) * overlay_scale).round() as i32;
+
+        let chord_font: f32 = (self.draft.font_size + LARGE_KEY_FONT_BOOST) * overlay_scale;
+        let event_font: f32 = (self.draft.font_size + 4.0) * overlay_scale;
 
         let mut labels: Vec<(String, f32)> = Vec::new();
         if mouse_icon_visible {
@@ -511,8 +517,8 @@ impl App {
             let text_size = Self::measure_text(ctx, &label, font_points);
             let (text_w_px, text_h_px) = if label == MOUSE_ICON_TOKEN {
                 (
-                    (52.0 * px_scale).round() as i32,
-                    (68.0 * px_scale).round() as i32,
+                    (52.0 * overlay_scale * px_scale).round() as i32,
+                    (68.0 * overlay_scale * px_scale).round() as i32,
                 )
             } else {
                 (
@@ -520,29 +526,29 @@ impl App {
                     (text_size.y * px_scale).round() as i32,
                 )
             };
-            let pill_w = (text_w_px + PILL_PAD_X * 2).max(PILL_MIN_W);
-            let pill_h = (text_h_px + PILL_PAD_Y * 2).max(PILL_MIN_H);
+            let pill_w = (text_w_px + scaled_px(PILL_PAD_X) * 2).max(scaled_px(PILL_MIN_W));
+            let pill_h = (text_h_px + scaled_px(PILL_PAD_Y) * 2).max(scaled_px(PILL_MIN_H));
 
             pill_rects.push(PillRect {
                 x: x_px,
                 y: 0,
                 w: pill_w,
                 h: pill_h,
-                radius: PILL_RADIUS,
+                radius: scaled_px(PILL_RADIUS),
             });
             pill_labels.push(label);
             pill_font_sizes.push(font_points);
 
             x_px += pill_w;
             if idx + 1 < pill_count {
-                x_px += GAP_BETWEEN_PILLS;
+                x_px += scaled_px(GAP_BETWEEN_PILLS);
             }
             content_h_px = content_h_px.max(pill_h);
         }
 
         if pill_rects.is_empty() {
-            let width_px = (220.0 * px_scale).round() as i32;
-            let height_px = (76.0 * px_scale).round() as i32;
+            let width_px = (220.0 * overlay_scale * px_scale).round() as i32;
+            let height_px = (76.0 * overlay_scale * px_scale).round() as i32;
             return OverlayGeometry {
                 width_px,
                 height_px,
@@ -555,8 +561,8 @@ impl App {
         }
 
         let content_w_px = pill_rects.last().map(|r| r.x + r.w).unwrap_or(0);
-        let tray_w = (content_w_px + TRAY_PAD_X * 2).max(1);
-        let tray_h = (content_h_px + TRAY_PAD_Y * 2).max(1);
+        let tray_w = (content_w_px + scaled_px(TRAY_PAD_X) * 2).max(1);
+        let tray_h = (content_h_px + scaled_px(TRAY_PAD_Y) * 2).max(1);
 
         let content_origin_x = (tray_w - content_w_px) / 2;
         let content_origin_y = (tray_h - content_h_px) / 2;
@@ -589,7 +595,12 @@ impl App {
             self.region_test_applied = true;
             hwnd
         } else {
-            apply_tray_region(OVERLAY_VIEWPORT_TITLE, width, height, TRAY_RADIUS)
+            apply_tray_region(
+                OVERLAY_VIEWPORT_TITLE,
+                width,
+                height,
+                ((TRAY_RADIUS as f32) * self.draft.overlay_scale.clamp(0.6, 2.0)).round() as i32,
+            )
         };
 
         if let Some(hwnd_val) = hwnd {
@@ -698,7 +709,7 @@ impl eframe::App for App {
             let overlay_id = egui::ViewportId::from_hash_of("overlay");
 
             if !overlay_visible {
-                ctx.send_viewport_cmd_to(overlay_id, egui::ViewportCommand::Visible(false));
+                ctx.send_viewport_cmd_to(overlay_id, egui::ViewportCommand::Close);
                 self.last_region_geometry = None;
             } else {
                 ctx.send_viewport_cmd_to(
@@ -714,131 +725,155 @@ impl eframe::App for App {
                 ctx.send_viewport_cmd_to(overlay_id, egui::ViewportCommand::Visible(true));
             }
 
-            ctx.show_viewport_immediate(
-                overlay_id,
-                egui::ViewportBuilder::default()
-                    .with_inner_size([geometry.width_points, geometry.height_points])
-                    .with_position(win_pos)
-                    .with_title(OVERLAY_VIEWPORT_TITLE)
-                    .with_decorations(false)
-                    .with_titlebar_shown(false)
-                    .with_titlebar_buttons_shown(false)
-                    .with_taskbar(false)
-                    .with_always_on_top()
-                    .with_resizable(false)
-                    .with_transparent(true)
-                    .with_mouse_passthrough(true),
-                move |ctx, _class| {
-                    ensure_windows_overlay_transparency();
-                    let palette = theme::Palette::from_config(&cfg);
+            if overlay_visible {
+                ctx.show_viewport_immediate(
+                    overlay_id,
+                    egui::ViewportBuilder::default()
+                        .with_inner_size([geometry.width_points, geometry.height_points])
+                        .with_position(win_pos)
+                        .with_title(OVERLAY_VIEWPORT_TITLE)
+                        .with_decorations(false)
+                        .with_titlebar_shown(false)
+                        .with_titlebar_buttons_shown(false)
+                        .with_taskbar(false)
+                        .with_always_on_top()
+                        .with_resizable(false)
+                        .with_transparent(true)
+                        .with_mouse_passthrough(true),
+                    move |ctx, _class| {
+                        ensure_windows_overlay_transparency();
+                        let palette = theme::Palette::from_config(&cfg);
 
-                    let mut vis = egui::Visuals::light();
-                    vis.panel_fill = egui::Color32::WHITE;
-                    vis.window_fill = egui::Color32::WHITE;
-                    vis.extreme_bg_color = egui::Color32::WHITE;
-                    ctx.set_visuals(vis);
+                        let mut vis = egui::Visuals::light();
+                        vis.panel_fill = egui::Color32::WHITE;
+                        vis.window_fill = egui::Color32::WHITE;
+                        vis.extreme_bg_color = egui::Color32::WHITE;
+                        ctx.set_visuals(vis);
 
-                    egui::CentralPanel::default()
-                        .frame(egui::Frame::none().fill(egui::Color32::WHITE))
-                        .show(ctx, |ui| {
-                            if !overlay_visible {
-                                return;
-                            }
-
-                            let panel_rect = ui.available_rect_before_wrap();
-                            let tray_rounding =
-                                egui::Rounding::same(TRAY_RADIUS as f32 / ctx.pixels_per_point());
-                            ui.painter().rect_filled(
-                                panel_rect,
-                                tray_rounding,
-                                egui::Color32::WHITE,
-                            );
-
-                            if region_debug_bounds_enabled() {
-                                let window_debug_stroke =
-                                    egui::Stroke::new(1.0, egui::Color32::from_rgb(0, 255, 0));
-                                let rounding = egui::Rounding::same(0.0);
-                                paint_rect_stroke_inside(
-                                    ui,
+                        egui::CentralPanel::default()
+                            .frame(egui::Frame::none().fill(egui::Color32::WHITE))
+                            .show(ctx, |ui| {
+                                let panel_rect = ui.available_rect_before_wrap();
+                                let tray_rounding = egui::Rounding::same(
+                                    (TRAY_RADIUS as f32 * cfg.overlay_scale.clamp(0.6, 2.0))
+                                        / ctx.pixels_per_point(),
+                                );
+                                ui.painter().rect_filled(
                                     panel_rect,
-                                    rounding,
-                                    window_debug_stroke,
+                                    tray_rounding,
+                                    egui::Color32::WHITE,
                                 );
 
-                                let pill_debug_stroke =
-                                    egui::Stroke::new(1.0, egui::Color32::from_rgb(255, 0, 255));
-                                let rounding = egui::Rounding::same(0.0);
-                                let px_scale = ctx.pixels_per_point();
-                                for rect in &geometry.pill_rects {
-                                    let min = egui::pos2(
-                                        rect.x as f32 / px_scale,
-                                        rect.y as f32 / px_scale,
-                                    );
-                                    let size = egui::vec2(
-                                        rect.w as f32 / px_scale,
-                                        rect.h as f32 / px_scale,
-                                    );
-                                    let pill_rect = egui::Rect::from_min_size(min, size);
+                                if region_debug_bounds_enabled() {
+                                    let window_debug_stroke =
+                                        egui::Stroke::new(1.0, egui::Color32::from_rgb(0, 255, 0));
+                                    let rounding = egui::Rounding::same(0.0);
                                     paint_rect_stroke_inside(
                                         ui,
-                                        pill_rect,
+                                        panel_rect,
                                         rounding,
-                                        pill_debug_stroke,
+                                        window_debug_stroke,
                                     );
-                                }
-                            }
 
-                            let px_scale = ctx.pixels_per_point();
-                            let pill_fill = egui::Color32::from_rgb(122, 71, 255);
-                            let pill_text = egui::Color32::WHITE;
-
-                            for ((rect, label), font_size) in geometry
-                                .pill_rects
-                                .iter()
-                                .zip(geometry.pill_labels.iter())
-                                .zip(geometry.pill_font_sizes.iter())
-                            {
-                                let pill_rect = egui::Rect::from_min_size(
-                                    egui::pos2(rect.x as f32 / px_scale, rect.y as f32 / px_scale),
-                                    egui::vec2(rect.w as f32 / px_scale, rect.h as f32 / px_scale),
-                                );
-                                let rounding = egui::Rounding::same(rect.radius as f32 / px_scale);
-                                ui.painter().rect_filled(pill_rect, rounding, pill_fill);
-                                if label == MOUSE_ICON_TOKEN {
-                                    draw_mouse_icon(
-                                        ui.painter(),
-                                        pill_rect,
-                                        mouse_highlight,
+                                    let pill_debug_stroke = egui::Stroke::new(
                                         1.0,
-                                        scroll_arrow,
-                                        &palette,
+                                        egui::Color32::from_rgb(255, 0, 255),
                                     );
-                                } else {
-                                    ui.painter().text(
-                                        pill_rect.center(),
-                                        egui::Align2::CENTER_CENTER,
-                                        label,
-                                        egui::FontId::proportional(*font_size),
-                                        pill_text,
-                                    );
+                                    let rounding = egui::Rounding::same(0.0);
+                                    let px_scale = ctx.pixels_per_point();
+                                    for rect in &geometry.pill_rects {
+                                        let min = egui::pos2(
+                                            rect.x as f32 / px_scale,
+                                            rect.y as f32 / px_scale,
+                                        );
+                                        let size = egui::vec2(
+                                            rect.w as f32 / px_scale,
+                                            rect.h as f32 / px_scale,
+                                        );
+                                        let pill_rect = egui::Rect::from_min_size(min, size);
+                                        paint_rect_stroke_inside(
+                                            ui,
+                                            pill_rect,
+                                            rounding,
+                                            pill_debug_stroke,
+                                        );
+                                    }
                                 }
-                            }
-                        });
-                },
-            );
+
+                                let px_scale = ctx.pixels_per_point();
+                                let pill_fill = egui::Color32::from_rgb(122, 71, 255);
+                                let pill_text = egui::Color32::WHITE;
+
+                                for ((rect, label), font_size) in geometry
+                                    .pill_rects
+                                    .iter()
+                                    .zip(geometry.pill_labels.iter())
+                                    .zip(geometry.pill_font_sizes.iter())
+                                {
+                                    let pill_rect = egui::Rect::from_min_size(
+                                        egui::pos2(
+                                            rect.x as f32 / px_scale,
+                                            rect.y as f32 / px_scale,
+                                        ),
+                                        egui::vec2(
+                                            rect.w as f32 / px_scale,
+                                            rect.h as f32 / px_scale,
+                                        ),
+                                    );
+                                    let rounding =
+                                        egui::Rounding::same(rect.radius as f32 / px_scale);
+                                    ui.painter().rect_filled(pill_rect, rounding, pill_fill);
+                                    if label == MOUSE_ICON_TOKEN {
+                                        draw_mouse_icon(
+                                            ui.painter(),
+                                            pill_rect,
+                                            mouse_highlight,
+                                            1.0,
+                                            scroll_arrow,
+                                            &palette,
+                                        );
+                                    } else {
+                                        ui.painter().text(
+                                            pill_rect.center(),
+                                            egui::Align2::CENTER_CENTER,
+                                            label,
+                                            egui::FontId::proportional(*font_size),
+                                            pill_text,
+                                        );
+                                    }
+                                }
+                            });
+                    },
+                );
+            }
         }
 
         ctx.request_repaint_after(Duration::from_millis(16));
     }
 }
 
-pub fn run(rx: Receiver<InputEvent>, config: SharedConfig) -> Result<()> {
-    let options = eframe::NativeOptions {
-        viewport: egui::ViewportBuilder::default()
+pub fn run(
+    rx: Receiver<InputEvent>,
+    config: SharedConfig,
+    app_icon: Option<egui::IconData>,
+) -> Result<()> {
+    let viewport = if let Some(app_icon) = app_icon {
+        egui::ViewportBuilder::default()
             .with_inner_size([520.0, 600.0])
             .with_resizable(true)
             .with_min_inner_size([420.0, 400.0])
-            .with_transparent(true),
+            .with_transparent(true)
+            .with_icon(app_icon)
+    } else {
+        egui::ViewportBuilder::default()
+            .with_inner_size([520.0, 600.0])
+            .with_resizable(true)
+            .with_min_inner_size([420.0, 400.0])
+            .with_transparent(true)
+    };
+
+    let options = eframe::NativeOptions {
+        viewport,
         ..Default::default()
     };
 
