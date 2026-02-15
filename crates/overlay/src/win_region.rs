@@ -35,6 +35,29 @@ mod imp {
         }
     }
 
+    pub fn apply_test_region(title: &str) -> Option<isize> {
+        let hwnd = hwnd_from_title(title)?;
+        eprintln!("[overlay-region] Applying TEST region hwnd={hwnd:p}");
+
+        let hrgn = unsafe { CreateRoundRectRgn(0, 0, 240, 80, 40, 40) };
+        if hrgn.is_null() {
+            let err = unsafe { GetLastError() };
+            eprintln!("[overlay-region] CreateRoundRectRgn(TEST) failed err={err}");
+            return Some(hwnd as isize);
+        }
+
+        let res = unsafe { SetWindowRgn(hwnd, hrgn, 1) };
+        if res == 0 {
+            let err = unsafe { GetLastError() };
+            eprintln!("[overlay-region] SetWindowRgn(TEST) failed err={err}");
+            unsafe { DeleteObject(hrgn as _) };
+        } else {
+            eprintln!("[overlay-region] SetWindowRgn(TEST) ok");
+        }
+
+        Some(hwnd as isize)
+    }
+
     pub fn apply_tray_region(
         title: &str,
         width: i32,
@@ -87,7 +110,13 @@ mod imp {
 }
 
 #[cfg(target_os = "windows")]
-pub use imp::{apply_tray_region, set_layered_alpha};
+#[allow(unused_imports)]
+pub use imp::{apply_test_region, apply_tray_region, set_layered_alpha};
+
+#[cfg(not(target_os = "windows"))]
+pub fn apply_test_region(_title: &str) -> Option<isize> {
+    None
+}
 
 #[cfg(not(target_os = "windows"))]
 pub fn apply_tray_region(

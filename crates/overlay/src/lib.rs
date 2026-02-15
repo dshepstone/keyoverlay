@@ -245,8 +245,8 @@ impl App {
         if draft.font_size < 26.0 {
             draft.font_size = 26.0;
         }
-        let margin_x = draft.margin_x as i32;
-        let margin_y = draft.margin_y as i32;
+        let margin_x_i32 = draft.margin_x as i32;
+        let margin_y_i32 = draft.margin_y as i32;
 
         Self {
             config,
@@ -257,8 +257,8 @@ impl App {
             input_state: InputState::new(),
             screen_size: [1920.0, 1080.0],
             fixed_origin_px: FixedOrigin {
-                x: margin_x,
-                y: margin_y,
+                x: margin_x_i32,
+                y: margin_y_i32,
             },
             last_pos: None,
             visibility: OverlayVisibility::Hidden,
