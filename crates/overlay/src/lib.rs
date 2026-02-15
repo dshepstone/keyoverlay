@@ -97,79 +97,34 @@ impl InputState {
 
         if mouse_debug_enabled() {
             match &event {
-                InputEvent::MouseDown(e) => {
-                    eprintln!("[mouse-debug] down button={} t={now:?}", e.button)
+                InputEvent::MouseClick(e) => {
+                    eprintln!("[mouse-debug] click button={} t={now:?}", e.button)
                 }
-                InputEvent::MouseUp(e) => {
-                    eprintln!("[mouse-debug] up button={} t={now:?}", e.button)
-                }
-                InputEvent::MouseWheel(e) => {
+                InputEvent::Scroll(e) => {
                     eprintln!("[mouse-debug] wheel dir={} t={now:?}", e.direction)
                 }
-                InputEvent::MouseMove(_) => eprintln!("[mouse-debug] move t={now:?}"),
                 _ => {}
             }
         }
 
         match event {
-            InputEvent::KeyDown(e) => {
-                let was_empty = self.pressed_keys.is_empty();
-                self.pressed_keys.insert(e.key);
-                if was_empty {
-                    self.key_sequence_started_at = now;
-                }
-                self.display_chord = self.chord_from_pressed_keys();
+            InputEvent::Key(e) => {
+                self.pressed_keys.clear();
+                self.key_sequence_started_at = now;
+                self.display_chord = Some(e.display_string());
             }
-            InputEvent::KeyUp(e) => {
-                self.pressed_keys.remove(&e.key);
-                if self.display_chord.is_none() {
-                    self.display_chord = self.chord_from_pressed_keys();
-                }
-            }
-            InputEvent::MouseDown(e) => {
-                self.pressed_mouse_buttons.insert(e.button);
-                self.mouse_label = None;
+            InputEvent::MouseClick(e) => {
+                self.pressed_mouse_buttons.clear();
                 self.last_mouse_activity = now;
                 self.mouse_icon_active = true;
                 self.last_mouse_highlight = MouseHighlight::from_button(e.button);
-
-                if e.button == MouseButton::Left {
-                    self.pending_left_press_at = Some(now);
-                    self.pending_left_press_moved = false;
-                } else {
-                    self.last_mouse_was_scroll = false;
-                    self.mouse_label = Some(format!("{} Click", e.button));
-                }
+                self.last_mouse_was_scroll = false;
+                self.mouse_label = Some(format!("{} Click", e.button));
+                self.pending_left_press_at = None;
+                self.pending_left_press_moved = false;
             }
-            InputEvent::MouseUp(e) => {
-                self.pressed_mouse_buttons.remove(&e.button);
-                self.last_mouse_activity = now;
-                self.mouse_icon_active = true;
-                self.last_mouse_highlight = MouseHighlight::from_button(e.button);
-
-                if e.button == MouseButton::Left {
-                    if let Some(press_at) = self.pending_left_press_at {
-                        if !self.pending_left_press_moved
-                            && now.duration_since(press_at) <= Duration::from_millis(250)
-                        {
-                            self.last_mouse_was_scroll = false;
-                            self.mouse_label = Some("Left Click".to_string());
-                        } else {
-                            self.last_mouse_was_scroll = false;
-                            self.mouse_label = None;
-                        }
-                    } else {
-                        self.last_mouse_was_scroll = false;
-                        self.mouse_label = None;
-                    }
-                    self.pending_left_press_at = None;
-                    self.pending_left_press_moved = false;
-                } else {
-                    self.last_mouse_was_scroll = false;
-                    self.mouse_label = Some(format!("{} Click", e.button));
-                }
-            }
-            InputEvent::MouseWheel(e) => {
+            InputEvent::Scroll(e) => {
+                self.pressed_mouse_buttons.clear();
                 self.last_mouse_activity = now;
                 self.mouse_icon_active = true;
                 self.last_mouse_highlight = MouseHighlight::None;
@@ -183,11 +138,6 @@ impl InputState {
                     last_event: now,
                 });
             }
-            InputEvent::MouseMove(_) => {
-                if self.pending_left_press_at.is_some() {
-                    self.pending_left_press_moved = true;
-                }
-            }
         }
     }
 
@@ -197,13 +147,8 @@ impl InputState {
             self.scroll_highlight = None;
         }
 
-        if let Some(press_at) = self.pending_left_press_at {
-            if now.duration_since(press_at) > Duration::from_millis(250) {
-                self.pending_left_press_at = None;
-                self.pending_left_press_moved = false;
-                self.pressed_mouse_buttons.remove(&MouseButton::Left);
-            }
-        }
+        self.pressed_keys.clear();
+        self.pressed_mouse_buttons.clear();
     }
 
     fn overlay_visible(
