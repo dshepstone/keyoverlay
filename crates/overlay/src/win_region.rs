@@ -9,16 +9,13 @@ pub struct PillRect {
 
 #[cfg(target_os = "windows")]
 mod imp {
-    use super::PillRect;
     use std::ffi::OsStr;
     use std::iter::once;
     use std::os::windows::ffi::OsStrExt;
     use std::ptr;
 
     use windows_sys::Win32::Foundation::{GetLastError, HWND};
-    use windows_sys::Win32::Graphics::Gdi::{
-        CombineRgn, CreateRectRgn, CreateRoundRectRgn, DeleteObject, SetWindowRgn, RGN_AND, RGN_OR,
-    };
+    use windows_sys::Win32::Graphics::Gdi::{CreateRoundRectRgn, DeleteObject, SetWindowRgn};
     use windows_sys::Win32::UI::WindowsAndMessaging::FindWindowW;
 
     fn to_wide(s: &str) -> Vec<u16> {
@@ -58,101 +55,34 @@ mod imp {
         Some(hwnd as isize)
     }
 
-    pub fn apply_pill_region(
+    pub fn apply_tray_region(
         title: &str,
         width: i32,
         height: i32,
-        rects: &[PillRect],
+        tray_radius_px: i32,
     ) -> Option<isize> {
         let hwnd = hwnd_from_title(title)?;
+        let tray_w = width.max(1);
+        let tray_h = height.max(1);
+        let rr = tray_radius_px.max(0);
+
         eprintln!(
-            "[overlay-region] apply hwnd={hwnd:p} window={}x{} rects={}",
-            width,
-            height,
-            rects.len()
+            "[overlay-region] apply tray hwnd={hwnd:p} window={}x{} radius={}",
+            tray_w, tray_h, rr
         );
 
-        if rects.is_empty() {
-            eprintln!("[overlay-region] skip empty rects");
-            return Some(hwnd as isize);
-        }
-
-        let mut union_bounds = (i32::MAX, i32::MAX, i32::MIN, i32::MIN);
-
-        let first = &rects[0];
-        eprintln!(
-            "[overlay-region] rect[0] x={} y={} w={} h={} r={}",
-            first.x, first.y, first.w, first.h, first.radius
-        );
-        union_bounds.0 = union_bounds.0.min(first.x);
-        union_bounds.1 = union_bounds.1.min(first.y);
-        union_bounds.2 = union_bounds.2.max(first.x + first.w);
-        union_bounds.3 = union_bounds.3.max(first.y + first.h);
-
-        let mut accum = unsafe {
-            CreateRoundRectRgn(
-                first.x,
-                first.y,
-                first.x + first.w,
-                first.y + first.h,
-                first.radius * 2,
-                first.radius * 2,
-            )
-        };
-        if accum.is_null() {
+        let tray_rgn = unsafe { CreateRoundRectRgn(0, 0, tray_w, tray_h, rr * 2, rr * 2) };
+        if tray_rgn.is_null() {
             let err = unsafe { GetLastError() };
-            eprintln!("[overlay-region] CreateRoundRectRgn(first) failed err={err}");
+            eprintln!("[overlay-region] CreateRoundRectRgn(TRAY) failed err={err}");
             return Some(hwnd as isize);
         }
 
-        for (idx, rect) in rects.iter().enumerate().skip(1) {
-            eprintln!(
-                "[overlay-region] rect[{idx}] x={} y={} w={} h={} r={}",
-                rect.x, rect.y, rect.w, rect.h, rect.radius
-            );
-            union_bounds.0 = union_bounds.0.min(rect.x);
-            union_bounds.1 = union_bounds.1.min(rect.y);
-            union_bounds.2 = union_bounds.2.max(rect.x + rect.w);
-            union_bounds.3 = union_bounds.3.max(rect.y + rect.h);
-
-            let next = unsafe {
-                CreateRoundRectRgn(
-                    rect.x,
-                    rect.y,
-                    rect.x + rect.w,
-                    rect.y + rect.h,
-                    rect.radius * 2,
-                    rect.radius * 2,
-                )
-            };
-            if next.is_null() {
-                continue;
-            }
-            unsafe {
-                CombineRgn(accum, accum, next, RGN_OR);
-                DeleteObject(next as _);
-            }
-        }
-
-        eprintln!(
-            "[overlay-region] union bounds left={} top={} right={} bottom={}",
-            union_bounds.0, union_bounds.1, union_bounds.2, union_bounds.3
-        );
-
-        // Ensure region cannot exceed current window client size.
-        let clamp = unsafe { CreateRectRgn(0, 0, width.max(1), height.max(1)) };
-        if !clamp.is_null() {
-            unsafe {
-                CombineRgn(accum, accum, clamp, RGN_AND);
-                DeleteObject(clamp as _);
-            }
-        }
-
-        let res = unsafe { SetWindowRgn(hwnd, accum, 1) };
+        let res = unsafe { SetWindowRgn(hwnd, tray_rgn, 1) };
         if res == 0 {
             let err = unsafe { GetLastError() };
-            eprintln!("[overlay-region] SetWindowRgn failed err={err}");
-            unsafe { DeleteObject(accum as _) };
+            eprintln!("[overlay-region] SetWindowRgn(TRAY) failed err={err}");
+            unsafe { DeleteObject(tray_rgn as _) };
         }
 
         Some(hwnd as isize)
@@ -160,7 +90,7 @@ mod imp {
 }
 
 #[cfg(target_os = "windows")]
-pub use imp::{apply_pill_region, apply_test_region};
+pub use imp::{apply_test_region, apply_tray_region};
 
 #[cfg(not(target_os = "windows"))]
 pub fn apply_test_region(_title: &str) -> Option<isize> {
@@ -168,11 +98,11 @@ pub fn apply_test_region(_title: &str) -> Option<isize> {
 }
 
 #[cfg(not(target_os = "windows"))]
-pub fn apply_pill_region(
+pub fn apply_tray_region(
     _title: &str,
     _width: i32,
     _height: i32,
-    _rects: &[PillRect],
+    _tray_radius_px: i32,
 ) -> Option<isize> {
     None
 }

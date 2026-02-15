@@ -1057,8 +1057,6 @@ dependencies = [
 [[package]]
 name = "egui-wgpu"
 version = "0.27.2"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "469ff65843f88a702b731a1532b7d03b0e8e96d283e70f3a22b0e06c46cb9b37"
 dependencies = [
  "bytemuck",
  "document-features",
@@ -1858,6 +1856,7 @@ dependencies = [
  "eframe",
  "keyoverlay-core",
  "keyoverlay-input",
+ "windows-sys 0.59.0",
 ]
 
 [[package]]

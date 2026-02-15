@@ -1,11 +1,11 @@
-mod mouse_icon;
-mod overlay_window;
 mod settings_window;
 mod theme;
 mod win_region;
 
 use std::collections::HashSet;
+use std::env;
 use std::sync::mpsc::Receiver;
+use std::sync::OnceLock;
 use std::time::{Duration, Instant};
 
 use anyhow::Result;
@@ -14,16 +14,21 @@ use eframe::epaint::Rgba;
 use keyoverlay_core::{AppConfig, OverlayPosition, SharedConfig};
 use keyoverlay_input::{InputEvent, Key, MouseButton};
 
-use mouse_icon::{draw_mouse_icon, MouseHighlight};
-use overlay_window::{draw_chord_pill, draw_event_pill};
-use theme::Palette;
-use win_region::{apply_pill_region, apply_test_region, PillRect};
+use win_region::{apply_test_region, apply_tray_region, PillRect};
 
 const OVERLAY_VIEWPORT_TITLE: &str = "KeyOverlayOverlay";
 const OVERLAY_IDLE_HIDE_MS: u64 = 700;
 const MOUSE_ICON_IDLE_HIDE_MS: u64 = 450;
-const OVERLAY_PADDING: f32 = 14.0;
 const LARGE_KEY_FONT_BOOST: f32 = 14.0;
+const GAP_BETWEEN_PILLS: i32 = 10;
+const TRAY_PAD_X: i32 = 22;
+const TRAY_PAD_Y: i32 = 18;
+const TRAY_RADIUS: i32 = 22;
+const PILL_PAD_X: i32 = 24;
+const PILL_PAD_Y: i32 = 16;
+const PILL_MIN_H: i32 = 46;
+const PILL_MIN_W: i32 = 88;
+const PILL_RADIUS: i32 = 18;
 
 fn ensure_windows_overlay_transparency() {}
 
@@ -33,7 +38,9 @@ struct InputState {
     pressed_mouse_buttons: HashSet<MouseButton>,
     last_any_activity: Instant,
     last_mouse_activity: Instant,
-    last_mouse_event_label: Option<String>,
+    mouse_icon_active: bool,
+    mouse_label: Option<String>,
+    pending_left_press_at: Option<Instant>,
 }
 
 impl InputState {
@@ -44,12 +51,31 @@ impl InputState {
             pressed_mouse_buttons: HashSet::new(),
             last_any_activity: now,
             last_mouse_activity: now,
-            last_mouse_event_label: None,
+            mouse_icon_active: false,
+            mouse_label: None,
+            pending_left_press_at: None,
         }
     }
 
     fn apply_event(&mut self, event: InputEvent) {
         let now = event.timestamp();
+
+        if mouse_debug_enabled() {
+            match &event {
+                InputEvent::MouseDown(e) => {
+                    eprintln!("[mouse-debug] down button={} t={now:?}", e.button)
+                }
+                InputEvent::MouseUp(e) => {
+                    eprintln!("[mouse-debug] up button={} t={now:?}", e.button)
+                }
+                InputEvent::MouseWheel(e) => {
+                    eprintln!("[mouse-debug] wheel dir={} t={now:?}", e.direction)
+                }
+                InputEvent::MouseMove(_) => eprintln!("[mouse-debug] move t={now:?}"),
+                _ => {}
+            }
+        }
+
         match event {
             InputEvent::KeyDown(e) => {
                 self.pressed_keys.insert(e.key);
@@ -63,21 +89,50 @@ impl InputState {
                 self.pressed_mouse_buttons.insert(e.button);
                 self.last_any_activity = now;
                 self.last_mouse_activity = now;
-                self.last_mouse_event_label = Some(format!("{}", e.button));
+                self.mouse_icon_active = true;
+
+                if e.button == MouseButton::Left {
+                    self.pending_left_press_at = Some(now);
+                } else {
+                    self.mouse_label = Some(format!("{} Click", e.button));
+                }
             }
             InputEvent::MouseUp(e) => {
                 self.pressed_mouse_buttons.remove(&e.button);
                 self.last_any_activity = now;
                 self.last_mouse_activity = now;
+                self.mouse_icon_active = true;
+
+                if e.button == MouseButton::Left {
+                    if let Some(press_at) = self.pending_left_press_at {
+                        if now.duration_since(press_at) <= Duration::from_millis(250) {
+                            self.mouse_label = Some("Left Click".to_string());
+                        }
+                    }
+                    self.pending_left_press_at = None;
+                } else {
+                    self.mouse_label = Some(format!("{} Click", e.button));
+                }
             }
-            InputEvent::MouseWheel(e) => {
+            InputEvent::MouseWheel(_) => {
                 self.last_any_activity = now;
                 self.last_mouse_activity = now;
-                self.last_mouse_event_label = Some(format!("{}", e.direction));
+                self.mouse_icon_active = true;
+                self.mouse_label = Some("Scroll".to_string());
             }
             InputEvent::MouseMove(_) => {
                 self.last_any_activity = now;
                 self.last_mouse_activity = now;
+                self.mouse_icon_active = true;
+            }
+        }
+    }
+
+    fn tick(&mut self, now: Instant) {
+        if let Some(press_at) = self.pending_left_press_at {
+            if now.duration_since(press_at) > Duration::from_millis(250) {
+                self.pending_left_press_at = None;
+                self.pressed_mouse_buttons.remove(&MouseButton::Left);
             }
         }
     }
@@ -89,16 +144,16 @@ impl InputState {
         now.duration_since(self.last_any_activity) < Duration::from_millis(OVERLAY_IDLE_HIDE_MS)
     }
 
-    fn mouse_visible(&self, now: Instant) -> bool {
-        if !self.pressed_mouse_buttons.is_empty() {
-            return true;
+    fn mouse_icon_visible(&self, now: Instant) -> bool {
+        if !self.mouse_icon_active {
+            return false;
         }
         now.duration_since(self.last_mouse_activity)
             < Duration::from_millis(MOUSE_ICON_IDLE_HIDE_MS)
     }
 
-    fn mouse_event_visible(&self, now: Instant) -> bool {
-        self.last_mouse_event_label.is_some() && self.mouse_visible(now)
+    fn mouse_label_visible(&self, now: Instant) -> bool {
+        self.mouse_label.is_some() && self.mouse_icon_visible(now)
     }
 
     fn current_chord(&self) -> Option<String> {
@@ -131,9 +186,36 @@ fn key_sort_rank(key: Key) -> (u8, String) {
 
 #[derive(Clone, Debug, PartialEq)]
 struct OverlayGeometry {
-    width: f32,
-    height: f32,
+    width_px: i32,
+    height_px: i32,
+    width_points: f32,
+    height_points: f32,
     pill_rects: Vec<PillRect>,
+    pill_labels: Vec<String>,
+    pill_font_sizes: Vec<f32>,
+}
+
+fn region_debug_bounds_enabled() -> bool {
+    static ENABLED: OnceLock<bool> = OnceLock::new();
+    *ENABLED.get_or_init(|| env::var("REGION_DEBUG_BOUNDS").is_ok_and(|v| v == "1"))
+}
+
+fn mouse_debug_enabled() -> bool {
+    static ENABLED: OnceLock<bool> = OnceLock::new();
+    *ENABLED.get_or_init(|| env::var("MOUSE_DEBUG").is_ok_and(|v| v == "1"))
+}
+
+fn paint_rect_stroke_inside(
+    ui: &egui::Ui,
+    rect: egui::Rect,
+    rounding: egui::Rounding,
+    stroke: egui::Stroke,
+) {
+    // egui 0.27.2: rect_stroke(rect, rounding, stroke)
+    // Emulate "inside stroke" by shrinking half the stroke width
+    let inset = stroke.width * 0.5;
+    let r = rect.shrink(inset);
+    ui.painter().rect_stroke(r, rounding, stroke);
 }
 
 struct App {
@@ -210,30 +292,6 @@ impl App {
         }
     }
 
-    fn mouse_highlight(&self) -> MouseHighlight {
-        if self
-            .input_state
-            .pressed_mouse_buttons
-            .contains(&MouseButton::Left)
-        {
-            MouseHighlight::Left
-        } else if self
-            .input_state
-            .pressed_mouse_buttons
-            .contains(&MouseButton::Right)
-        {
-            MouseHighlight::Right
-        } else if self
-            .input_state
-            .pressed_mouse_buttons
-            .contains(&MouseButton::Middle)
-        {
-            MouseHighlight::Middle
-        } else {
-            MouseHighlight::None
-        }
-    }
-
     fn measure_text(ctx: &egui::Context, text: &str, font_size: f32) -> egui::Vec2 {
         let galley = ctx.fonts(|fonts| {
             fonts.layout_no_wrap(
@@ -249,116 +307,88 @@ impl App {
         &self,
         ctx: &egui::Context,
         chord: Option<&str>,
-        mouse_visible: bool,
-        mouse_event_label: Option<&str>,
+        mouse_icon_visible: bool,
+        mouse_label: Option<&str>,
     ) -> OverlayGeometry {
-        let padding: f32 = OVERLAY_PADDING;
+        let px_scale: f32 = ctx.pixels_per_point();
         let chord_font: f32 = self.draft.font_size + LARGE_KEY_FONT_BOOST;
         let event_font: f32 = self.draft.font_size + 4.0;
 
-        let mut chord_width: f32 = 0.0;
-        let mut chord_height: f32 = 0.0;
-        let mut chord_rects: Vec<PillRect> = Vec::new();
-
+        let mut labels: Vec<(String, f32)> = Vec::new();
+        if mouse_icon_visible {
+            labels.push(("🖱".to_owned(), event_font));
+        }
         if let Some(chord) = chord {
-            let parts: Vec<&str> = chord.split(" + ").collect();
-            let mut x: f32 = 0.0;
-            let row_h: f32 = chord_font + 20.0;
-            chord_height = row_h;
+            labels.extend(chord.split(" + ").map(|part| (part.to_owned(), chord_font)));
+        }
+        if let Some(label) = mouse_label {
+            labels.push((label.to_owned(), event_font));
+        }
 
-            for (idx, part) in parts.iter().enumerate() {
-                let size = Self::measure_text(ctx, part, chord_font);
-                let seg_w: f32 = size.x + 24.0;
-                chord_rects.push(PillRect {
-                    x: x.round() as i32,
-                    y: 0,
-                    w: seg_w.ceil() as i32,
-                    h: row_h.ceil() as i32,
-                    radius: self.draft.pill_rounding.round() as i32,
-                });
-                x += seg_w;
-                if idx < parts.len() - 1 {
-                    x += 26.0;
-                }
+        let pill_count = labels.len();
+        let mut pill_rects = Vec::with_capacity(pill_count);
+        let mut pill_labels = Vec::with_capacity(pill_count);
+        let mut pill_font_sizes = Vec::with_capacity(pill_count);
+        let mut x_px = 0;
+        let mut content_h_px = 0;
+
+        for (idx, (label, font_points)) in labels.into_iter().enumerate() {
+            let text_size = Self::measure_text(ctx, &label, font_points);
+            let text_w_px = (text_size.x * px_scale).round() as i32;
+            let text_h_px = (text_size.y * px_scale).round() as i32;
+            let pill_w = (text_w_px + PILL_PAD_X * 2).max(PILL_MIN_W);
+            let pill_h = (text_h_px + PILL_PAD_Y * 2).max(PILL_MIN_H);
+
+            pill_rects.push(PillRect {
+                x: x_px,
+                y: 0,
+                w: pill_w,
+                h: pill_h,
+                radius: PILL_RADIUS,
+            });
+            pill_labels.push(label);
+            pill_font_sizes.push(font_points);
+
+            x_px += pill_w;
+            if idx + 1 < pill_count {
+                x_px += GAP_BETWEEN_PILLS;
             }
-            chord_width = x;
+            content_h_px = content_h_px.max(pill_h);
         }
 
-        let mut event_width: f32 = 0.0;
-        let mut event_height: f32 = 0.0;
-        if let Some(label) = mouse_event_label {
-            let size = Self::measure_text(ctx, label, event_font);
-            event_width = size.x + 32.0;
-            event_height = size.y + 16.0;
+        if pill_rects.is_empty() {
+            let width_px = (220.0 * px_scale).round() as i32;
+            let height_px = (76.0 * px_scale).round() as i32;
+            return OverlayGeometry {
+                width_px,
+                height_px,
+                width_points: width_px as f32 / px_scale,
+                height_points: height_px as f32 / px_scale,
+                pill_rects,
+                pill_labels,
+                pill_font_sizes,
+            };
         }
 
-        let text_width: f32 = chord_width.max(event_width);
-        let mut text_height: f32 = 0.0;
-        if chord_height > 0.0 {
-            text_height += chord_height;
-        }
-        if chord_height > 0.0 && event_height > 0.0 {
-            text_height += 10.0;
-        }
-        if event_height > 0.0 {
-            text_height += event_height;
-        }
+        let content_w_px = pill_rects.last().map(|r| r.x + r.w).unwrap_or(0);
+        let tray_w = (content_w_px + TRAY_PAD_X * 2).max(1);
+        let tray_h = (content_h_px + TRAY_PAD_Y * 2).max(1);
 
-        let mouse_width: f32 = if mouse_visible { 48.0 } else { 0.0 };
-        let mouse_height: f32 = if mouse_visible { 68.0 } else { 0.0 };
-        let mouse_gap: f32 = if mouse_visible && text_width > 0.0 {
-            16.0
-        } else {
-            0.0
-        };
-
-        let content_width: f32 = mouse_width + mouse_gap + text_width;
-        let content_height: f32 = mouse_height.max(text_height);
-
-        let window_width: f32 = (content_width + padding * 2.0).ceil().max(1.0);
-        let window_height: f32 = (content_height + padding * 2.0).ceil().max(1.0);
-
-        let mut rects: Vec<PillRect> = Vec::new();
-        let text_left: f32 = padding + mouse_width + mouse_gap;
-        let text_top: f32 = padding + (content_height - text_height) / 2.0;
-
-        for mut r in chord_rects {
-            r.x = (text_left + r.x as f32).round() as i32;
-            r.y = text_top.round() as i32;
-            rects.push(r);
-        }
-
-        if mouse_event_label.is_some() {
-            let event_y = text_top
-                + if chord_height > 0.0 {
-                    chord_height + 10.0
-                } else {
-                    0.0
-                };
-            rects.push(PillRect {
-                x: text_left.round() as i32,
-                y: event_y.round() as i32,
-                w: event_width.ceil() as i32,
-                h: event_height.ceil() as i32,
-                radius: self.draft.pill_rounding.round() as i32,
-            });
-        }
-
-        if mouse_visible {
-            let mouse_y: f32 = padding + (content_height - mouse_height) / 2.0;
-            rects.push(PillRect {
-                x: padding.round() as i32,
-                y: mouse_y.round() as i32,
-                w: mouse_width as i32,
-                h: mouse_height as i32,
-                radius: 16,
-            });
+        let content_origin_x = (tray_w - content_w_px) / 2;
+        let content_origin_y = (tray_h - content_h_px) / 2;
+        for rect in &mut pill_rects {
+            rect.x += content_origin_x;
+            rect.y = content_origin_y + (content_h_px - rect.h) / 2;
         }
 
         OverlayGeometry {
-            width: window_width,
-            height: window_height,
-            pill_rects: rects,
+            width_px: tray_w,
+            height_px: tray_h,
+            width_points: tray_w as f32 / px_scale,
+            height_points: tray_h as f32 / px_scale,
+            pill_rects,
+            pill_labels,
+            pill_font_sizes,
         }
     }
 
@@ -367,15 +397,15 @@ impl App {
             return;
         }
 
-        let width = geometry.width.round() as i32;
-        let height = geometry.height.round() as i32;
+        let width = geometry.width_px;
+        let height = geometry.height_px;
 
         let hwnd = if !self.region_test_applied {
             let hwnd = apply_test_region(OVERLAY_VIEWPORT_TITLE);
             self.region_test_applied = true;
             hwnd
         } else {
-            apply_pill_region(OVERLAY_VIEWPORT_TITLE, width, height, &geometry.pill_rects)
+            apply_tray_region(OVERLAY_VIEWPORT_TITLE, width, height, TRAY_RADIUS)
         };
 
         if let Some(hwnd_val) = hwnd {
@@ -393,7 +423,7 @@ impl App {
 
 impl eframe::App for App {
     fn clear_color(&self, _visuals: &egui::Visuals) -> [f32; 4] {
-        Rgba::TRANSPARENT.to_array()
+        Rgba::from_rgb(1.0, 1.0, 1.0).to_array()
     }
 
     fn update(&mut self, ctx: &egui::Context, _frame: &mut eframe::Frame) {
@@ -412,30 +442,32 @@ impl eframe::App for App {
 
         if self.draft.overlay_enabled {
             let now = Instant::now();
+            self.input_state.tick(now);
+
             let overlay_visible = self.input_state.overlay_visible(now);
-            let mouse_visible = self.draft.show_mouse_icon && self.input_state.mouse_visible(now);
-            let mouse_event_visible = self.input_state.mouse_event_visible(now);
+            let mouse_icon_visible =
+                self.draft.show_mouse_icon && self.input_state.mouse_icon_visible(now);
+            let mouse_label_visible = self.input_state.mouse_label_visible(now);
             let chord = self.input_state.current_chord();
-            let mouse_highlight = self.mouse_highlight();
-            let mouse_event_label = self.input_state.last_mouse_event_label.clone();
+            let mouse_label = self.input_state.mouse_label.clone();
 
             let cfg = self.draft.clone();
-            let palette = Palette::from_config(&cfg);
-
-            let visible_mouse_label = if mouse_event_visible {
-                mouse_event_label.as_deref()
+            let visible_mouse_label = if mouse_label_visible {
+                mouse_label.as_deref()
             } else {
                 None
             };
             let geometry = self.build_overlay_geometry(
                 ctx,
                 chord.as_deref(),
-                mouse_visible,
+                mouse_icon_visible,
                 visible_mouse_label,
             );
 
-            let win_pos =
-                self.compute_overlay_position([geometry.width, geometry.height], self.screen_size);
+            let win_pos = self.compute_overlay_position(
+                [geometry.width_points, geometry.height_points],
+                self.screen_size,
+            );
             let overlay_id = egui::ViewportId::from_hash_of("overlay");
 
             if !overlay_visible {
@@ -444,7 +476,10 @@ impl eframe::App for App {
             } else {
                 ctx.send_viewport_cmd_to(
                     overlay_id,
-                    egui::ViewportCommand::InnerSize(egui::vec2(geometry.width, geometry.height)),
+                    egui::ViewportCommand::InnerSize(egui::vec2(
+                        geometry.width_points,
+                        geometry.height_points,
+                    )),
                 );
                 ctx.send_viewport_cmd_to(overlay_id, egui::ViewportCommand::OuterPosition(win_pos));
                 // Resize/reposition first, then apply region in window-local coordinates.
@@ -455,7 +490,7 @@ impl eframe::App for App {
             ctx.show_viewport_immediate(
                 overlay_id,
                 egui::ViewportBuilder::default()
-                    .with_inner_size([geometry.width, geometry.height])
+                    .with_inner_size([geometry.width_points, geometry.height_points])
                     .with_position(win_pos)
                     .with_title(OVERLAY_VIEWPORT_TITLE)
                     .with_decorations(false)
@@ -466,72 +501,86 @@ impl eframe::App for App {
                 move |ctx, _class| {
                     ensure_windows_overlay_transparency();
 
-                    let mut vis = egui::Visuals::dark();
-                    vis.panel_fill = egui::Color32::TRANSPARENT;
-                    vis.window_fill = egui::Color32::TRANSPARENT;
-                    vis.extreme_bg_color = egui::Color32::TRANSPARENT;
+                    let mut vis = egui::Visuals::light();
+                    vis.panel_fill = egui::Color32::WHITE;
+                    vis.window_fill = egui::Color32::WHITE;
+                    vis.extreme_bg_color = egui::Color32::WHITE;
                     ctx.set_visuals(vis);
 
                     egui::CentralPanel::default()
-                        .frame(egui::Frame::none().fill(egui::Color32::TRANSPARENT))
+                        .frame(egui::Frame::none().fill(egui::Color32::WHITE))
                         .show(ctx, |ui| {
                             if !overlay_visible {
                                 return;
                             }
 
                             let panel_rect = ui.available_rect_before_wrap();
-                            let bg_alpha =
-                                (cfg.background_opacity * cfg.overlay_opacity * 255.0) as u8;
-                            let bg_color =
-                                egui::Color32::from_rgba_unmultiplied(30, 30, 40, bg_alpha);
-                            ui.painter()
-                                .rect_filled(panel_rect, cfg.pill_rounding + 6.0, bg_color);
-
-                            let content_rect = panel_rect.shrink(OVERLAY_PADDING);
-                            let mut content_ui = ui.child_ui(
-                                content_rect,
-                                egui::Layout::left_to_right(egui::Align::Center),
+                            let tray_rounding =
+                                egui::Rounding::same(TRAY_RADIUS as f32 / ctx.pixels_per_point());
+                            ui.painter().rect_filled(
+                                panel_rect,
+                                tray_rounding,
+                                egui::Color32::WHITE,
                             );
 
-                            content_ui.horizontal_centered(|ui| {
-                                if mouse_visible {
-                                    draw_mouse_icon(
-                                        ui,
-                                        mouse_highlight,
-                                        cfg.overlay_opacity,
-                                        &palette,
+                            if region_debug_bounds_enabled() {
+                                let window_debug_stroke =
+                                    egui::Stroke::new(1.0, egui::Color32::from_rgb(0, 255, 0));
+                                let rounding = egui::Rounding::same(0.0);
+                                paint_rect_stroke_inside(
+                                    ui,
+                                    panel_rect,
+                                    rounding,
+                                    window_debug_stroke,
+                                );
+
+                                let pill_debug_stroke =
+                                    egui::Stroke::new(1.0, egui::Color32::from_rgb(255, 0, 255));
+                                let rounding = egui::Rounding::same(0.0);
+                                let px_scale = ctx.pixels_per_point();
+                                for rect in &geometry.pill_rects {
+                                    let min = egui::pos2(
+                                        rect.x as f32 / px_scale,
+                                        rect.y as f32 / px_scale,
                                     );
-                                    ui.add_space(16.0);
+                                    let size = egui::vec2(
+                                        rect.w as f32 / px_scale,
+                                        rect.h as f32 / px_scale,
+                                    );
+                                    let pill_rect = egui::Rect::from_min_size(min, size);
+                                    paint_rect_stroke_inside(
+                                        ui,
+                                        pill_rect,
+                                        rounding,
+                                        pill_debug_stroke,
+                                    );
                                 }
+                            }
 
-                                ui.vertical_centered(|ui| {
-                                    if let Some(chord) = chord {
-                                        draw_chord_pill(
-                                            ui,
-                                            &chord,
-                                            cfg.overlay_opacity,
-                                            &palette,
-                                            cfg.pill_rounding,
-                                            cfg.font_size + LARGE_KEY_FONT_BOOST,
-                                        );
-                                    }
+                            let px_scale = ctx.pixels_per_point();
+                            let pill_fill = egui::Color32::from_rgb(122, 71, 255);
+                            let pill_text = egui::Color32::WHITE;
 
-                                    if mouse_event_visible {
-                                        if let Some(label) = mouse_event_label.as_deref() {
-                                            ui.add_space(10.0);
-                                            draw_event_pill(
-                                                ui,
-                                                label,
-                                                cfg.overlay_opacity,
-                                                palette.mouse_bg,
-                                                palette.mouse_fg,
-                                                cfg.pill_rounding,
-                                                cfg.font_size + 4.0,
-                                            );
-                                        }
-                                    }
-                                });
-                            });
+                            for ((rect, label), font_size) in geometry
+                                .pill_rects
+                                .iter()
+                                .zip(geometry.pill_labels.iter())
+                                .zip(geometry.pill_font_sizes.iter())
+                            {
+                                let pill_rect = egui::Rect::from_min_size(
+                                    egui::pos2(rect.x as f32 / px_scale, rect.y as f32 / px_scale),
+                                    egui::vec2(rect.w as f32 / px_scale, rect.h as f32 / px_scale),
+                                );
+                                let rounding = egui::Rounding::same(rect.radius as f32 / px_scale);
+                                ui.painter().rect_filled(pill_rect, rounding, pill_fill);
+                                ui.painter().text(
+                                    pill_rect.center(),
+                                    egui::Align2::CENTER_CENTER,
+                                    label,
+                                    egui::FontId::proportional(*font_size),
+                                    pill_text,
+                                );
+                            }
                         });
                 },
             );
