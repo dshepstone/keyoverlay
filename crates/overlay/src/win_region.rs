@@ -16,7 +16,10 @@ mod imp {
 
     use windows_sys::Win32::Foundation::{GetLastError, HWND};
     use windows_sys::Win32::Graphics::Gdi::{CreateRoundRectRgn, DeleteObject, SetWindowRgn};
-    use windows_sys::Win32::UI::WindowsAndMessaging::FindWindowW;
+    use windows_sys::Win32::UI::WindowsAndMessaging::{
+        FindWindowW, GetWindowLongW, SetLayeredWindowAttributes, SetWindowLongW, GWL_EXSTYLE,
+        LWA_ALPHA, WS_EX_LAYERED,
+    };
 
     fn to_wide(s: &str) -> Vec<u16> {
         OsStr::new(s).encode_wide().chain(once(0)).collect()
@@ -87,10 +90,27 @@ mod imp {
 
         Some(hwnd as isize)
     }
+
+    pub fn set_layered_alpha(title: &str, alpha: u8) -> Option<isize> {
+        let hwnd = hwnd_from_title(title)?;
+
+        let ex_style = unsafe { GetWindowLongW(hwnd, GWL_EXSTYLE) } as u32;
+        if ex_style & WS_EX_LAYERED == 0 {
+            unsafe { SetWindowLongW(hwnd, GWL_EXSTYLE, (ex_style | WS_EX_LAYERED) as i32) };
+        }
+
+        let ok = unsafe { SetLayeredWindowAttributes(hwnd, 0, alpha, LWA_ALPHA) };
+        if ok == 0 {
+            let err = unsafe { GetLastError() };
+            eprintln!("[overlay-alpha] SetLayeredWindowAttributes failed err={err}");
+        }
+
+        Some(hwnd as isize)
+    }
 }
 
 #[cfg(target_os = "windows")]
-pub use imp::{apply_test_region, apply_tray_region};
+pub use imp::{apply_test_region, apply_tray_region, set_layered_alpha};
 
 #[cfg(not(target_os = "windows"))]
 pub fn apply_test_region(_title: &str) -> Option<isize> {
@@ -104,5 +124,10 @@ pub fn apply_tray_region(
     _height: i32,
     _tray_radius_px: i32,
 ) -> Option<isize> {
+    None
+}
+
+#[cfg(not(target_os = "windows"))]
+pub fn set_layered_alpha(_title: &str, _alpha: u8) -> Option<isize> {
     None
 }
