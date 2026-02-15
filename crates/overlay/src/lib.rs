@@ -49,6 +49,7 @@ struct InputState {
     pending_left_press_at: Option<Instant>,
     pending_left_press_moved: bool,
     last_chord: Option<String>,
+    last_mouse_highlight: MouseHighlight,
 }
 
 impl InputState {
@@ -65,6 +66,7 @@ impl InputState {
             pending_left_press_at: None,
             pending_left_press_moved: false,
             last_chord: None,
+            last_mouse_highlight: MouseHighlight::None,
         }
     }
 
@@ -117,9 +119,11 @@ impl InputState {
             }
             InputEvent::MouseDown(e) => {
                 self.pressed_mouse_buttons.insert(e.button);
+                self.mouse_label = None;
                 self.last_any_activity = now;
                 self.last_mouse_activity = now;
                 self.mouse_icon_active = true;
+                self.last_mouse_highlight = MouseHighlight::from_button(e.button);
 
                 if e.button == MouseButton::Left {
                     self.pending_left_press_at = Some(now);
@@ -133,6 +137,7 @@ impl InputState {
                 self.last_any_activity = now;
                 self.last_mouse_activity = now;
                 self.mouse_icon_active = true;
+                self.last_mouse_highlight = MouseHighlight::from_button(e.button);
 
                 if e.button == MouseButton::Left {
                     if let Some(press_at) = self.pending_left_press_at {
@@ -140,7 +145,11 @@ impl InputState {
                             && now.duration_since(press_at) <= Duration::from_millis(250)
                         {
                             self.mouse_label = Some("Left Click".to_string());
+                        } else {
+                            self.mouse_label = None;
                         }
+                    } else {
+                        self.mouse_label = None;
                     }
                     self.pending_left_press_at = None;
                     self.pending_left_press_moved = false;
@@ -152,6 +161,7 @@ impl InputState {
                 self.last_any_activity = now;
                 self.last_mouse_activity = now;
                 self.mouse_icon_active = true;
+                self.last_mouse_highlight = MouseHighlight::None;
                 self.mouse_label = Some("Scroll".to_string());
             }
             InputEvent::MouseMove(_) => {
@@ -163,6 +173,10 @@ impl InputState {
     }
 
     fn tick(&mut self, now: Instant) {
+        if !self.mouse_icon_visible(now) {
+            self.last_mouse_highlight = MouseHighlight::None;
+        }
+
         if let Some(press_at) = self.pending_left_press_at {
             if now.duration_since(press_at) > Duration::from_millis(250) {
                 self.pending_left_press_at = None;
@@ -212,13 +226,15 @@ impl InputState {
         None
     }
 
-    fn mouse_highlight(&self) -> MouseHighlight {
+    fn mouse_highlight(&self, now: Instant) -> MouseHighlight {
         if self.pressed_mouse_buttons.contains(&MouseButton::Left) {
             MouseHighlight::Left
         } else if self.pressed_mouse_buttons.contains(&MouseButton::Middle) {
             MouseHighlight::Middle
         } else if self.pressed_mouse_buttons.contains(&MouseButton::Right) {
             MouseHighlight::Right
+        } else if self.mouse_icon_visible(now) {
+            self.last_mouse_highlight
         } else {
             MouseHighlight::None
         }
@@ -523,7 +539,7 @@ impl eframe::App for App {
             let mouse_label_visible = self.input_state.mouse_label_visible(now);
             let chord = self.input_state.chord_for_display(now);
             let mouse_label = self.input_state.mouse_label.clone();
-            let mouse_highlight = self.input_state.mouse_highlight();
+            let mouse_highlight = self.input_state.mouse_highlight(now);
 
             let cfg = self.draft.clone();
             let visible_mouse_label = if mouse_label_visible {
