@@ -393,6 +393,7 @@ impl App {
         if draft.font_size < 26.0 {
             draft.font_size = 26.0;
         }
+        draft.overlay_scale = draft.overlay_scale.clamp(0.6, 2.0);
         if draft.position == OverlayPosition::Manual
             && (draft.overlay_x - 500.0).abs() < f32::EPSILON
             && (draft.overlay_y - 500.0).abs() < f32::EPSILON
@@ -422,6 +423,7 @@ impl App {
         if self.draft.font_size < 26.0 {
             self.draft.font_size = 26.0;
         }
+        self.draft.overlay_scale = self.draft.overlay_scale.clamp(0.6, 2.0);
         *self.config.lock().unwrap() = self.draft.clone();
         self.draft.save();
         self.status_msg = Some(("Settings saved.".into(), Instant::now()));
@@ -430,6 +432,7 @@ impl App {
     fn reset_defaults(&mut self) {
         self.draft = AppConfig::default();
         self.draft.font_size = 26.0;
+        self.draft.overlay_scale = self.draft.overlay_scale.clamp(0.6, 2.0);
         self.apply();
     }
 
@@ -486,8 +489,11 @@ impl App {
         mouse_label: Option<&str>,
     ) -> OverlayGeometry {
         let px_scale: f32 = ctx.pixels_per_point();
-        let chord_font: f32 = self.draft.font_size + LARGE_KEY_FONT_BOOST;
-        let event_font: f32 = self.draft.font_size + 4.0;
+        let overlay_scale = self.draft.overlay_scale.clamp(0.6, 2.0);
+        let scaled_px = |value: i32| ((value as f32) * overlay_scale).round() as i32;
+
+        let chord_font: f32 = (self.draft.font_size + LARGE_KEY_FONT_BOOST) * overlay_scale;
+        let event_font: f32 = (self.draft.font_size + 4.0) * overlay_scale;
 
         let mut labels: Vec<(String, f32)> = Vec::new();
         if mouse_icon_visible {
@@ -511,8 +517,8 @@ impl App {
             let text_size = Self::measure_text(ctx, &label, font_points);
             let (text_w_px, text_h_px) = if label == MOUSE_ICON_TOKEN {
                 (
-                    (52.0 * px_scale).round() as i32,
-                    (68.0 * px_scale).round() as i32,
+                    (52.0 * overlay_scale * px_scale).round() as i32,
+                    (68.0 * overlay_scale * px_scale).round() as i32,
                 )
             } else {
                 (
@@ -520,29 +526,29 @@ impl App {
                     (text_size.y * px_scale).round() as i32,
                 )
             };
-            let pill_w = (text_w_px + PILL_PAD_X * 2).max(PILL_MIN_W);
-            let pill_h = (text_h_px + PILL_PAD_Y * 2).max(PILL_MIN_H);
+            let pill_w = (text_w_px + scaled_px(PILL_PAD_X) * 2).max(scaled_px(PILL_MIN_W));
+            let pill_h = (text_h_px + scaled_px(PILL_PAD_Y) * 2).max(scaled_px(PILL_MIN_H));
 
             pill_rects.push(PillRect {
                 x: x_px,
                 y: 0,
                 w: pill_w,
                 h: pill_h,
-                radius: PILL_RADIUS,
+                radius: scaled_px(PILL_RADIUS),
             });
             pill_labels.push(label);
             pill_font_sizes.push(font_points);
 
             x_px += pill_w;
             if idx + 1 < pill_count {
-                x_px += GAP_BETWEEN_PILLS;
+                x_px += scaled_px(GAP_BETWEEN_PILLS);
             }
             content_h_px = content_h_px.max(pill_h);
         }
 
         if pill_rects.is_empty() {
-            let width_px = (220.0 * px_scale).round() as i32;
-            let height_px = (76.0 * px_scale).round() as i32;
+            let width_px = (220.0 * overlay_scale * px_scale).round() as i32;
+            let height_px = (76.0 * overlay_scale * px_scale).round() as i32;
             return OverlayGeometry {
                 width_px,
                 height_px,
@@ -555,8 +561,8 @@ impl App {
         }
 
         let content_w_px = pill_rects.last().map(|r| r.x + r.w).unwrap_or(0);
-        let tray_w = (content_w_px + TRAY_PAD_X * 2).max(1);
-        let tray_h = (content_h_px + TRAY_PAD_Y * 2).max(1);
+        let tray_w = (content_w_px + scaled_px(TRAY_PAD_X) * 2).max(1);
+        let tray_h = (content_h_px + scaled_px(TRAY_PAD_Y) * 2).max(1);
 
         let content_origin_x = (tray_w - content_w_px) / 2;
         let content_origin_y = (tray_h - content_h_px) / 2;
@@ -589,7 +595,12 @@ impl App {
             self.region_test_applied = true;
             hwnd
         } else {
-            apply_tray_region(OVERLAY_VIEWPORT_TITLE, width, height, TRAY_RADIUS)
+            apply_tray_region(
+                OVERLAY_VIEWPORT_TITLE,
+                width,
+                height,
+                ((TRAY_RADIUS as f32) * self.draft.overlay_scale.clamp(0.6, 2.0)).round() as i32,
+            )
         };
 
         if let Some(hwnd_val) = hwnd {
@@ -744,7 +755,8 @@ impl eframe::App for App {
                             .show(ctx, |ui| {
                                 let panel_rect = ui.available_rect_before_wrap();
                                 let tray_rounding = egui::Rounding::same(
-                                    TRAY_RADIUS as f32 / ctx.pixels_per_point(),
+                                    (TRAY_RADIUS as f32 * cfg.overlay_scale.clamp(0.6, 2.0))
+                                        / ctx.pixels_per_point(),
                                 );
                                 ui.painter().rect_filled(
                                     panel_rect,

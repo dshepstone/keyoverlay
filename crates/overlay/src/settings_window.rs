@@ -64,6 +64,10 @@ pub fn draw_settings(ctx: &egui::Context, app: &mut App) {
         .show(ctx, |ui| {
             // ── Header with ON/OFF toggle ──
             ui.horizontal(|ui| {
+                ui.add(
+                    egui::Image::new(egui::include_image!("../../app/icon.png"))
+                        .fit_to_exact_size(egui::vec2(28.0, 28.0)),
+                );
                 ui.heading(
                     egui::RichText::new("KeyOverlay")
                         .color(egui::Color32::from_rgb(220, 220, 240))
@@ -226,6 +230,11 @@ fn tab_appearance(app: &mut App, ui: &mut egui::Ui) {
     ui.horizontal(|ui| {
         ui.label("Font size:");
         ui.add(egui::Slider::new(&mut app.draft.font_size, 10.0..=32.0).suffix(" px"));
+    });
+
+    ui.horizontal(|ui| {
+        ui.label("Overlay scale:");
+        ui.add(egui::Slider::new(&mut app.draft.overlay_scale, 0.60..=2.00).suffix("x"));
     });
 
     ui.horizontal(|ui| {
