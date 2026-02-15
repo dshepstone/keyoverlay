@@ -22,13 +22,19 @@ impl MouseHighlight {
     }
 }
 
-/// Draw a stylized mouse icon with optional button highlight.
-/// Returns the rect consumed.
+#[derive(Clone, Copy, PartialEq, Eq)]
+pub enum ScrollArrowDirection {
+    Up,
+    Down,
+}
+
+/// Draw a stylized mouse icon with optional button highlight and scroll arrow overlay.
 pub fn draw_mouse_icon(
     painter: &egui::Painter,
     rect: egui::Rect,
     highlight: MouseHighlight,
     alpha: f32,
+    scroll_arrow: Option<(ScrollArrowDirection, f32)>,
     palette: &Palette,
 ) {
     let body_color = apply_alpha(palette.mouse_body, alpha);
@@ -129,4 +135,73 @@ pub fn draw_mouse_icon(
     // ── Scroll wheel indicator (small oval in center) ──
     let wheel_center = egui::pos2(mid_x, top_y + 14.0);
     painter.circle_stroke(wheel_center, 3.5, egui::Stroke::new(1.0, outline_color));
+
+    if let Some((dir, arrow_alpha)) = scroll_arrow {
+        let arrow_color = apply_alpha(palette.mouse_highlight, arrow_alpha.clamp(0.0, 1.0));
+
+        // Keep arrow fully inside wheel column.
+        let wheel_top = top_y + 6.0;
+        let wheel_bottom = div_y - 2.0;
+        let center_x = mid_x;
+        let head_half_width = 3.2;
+        let head_height = 4.0;
+        let stroke_outer = egui::Stroke::new(2.2, arrow_color);
+        let stroke_inner = egui::Stroke::new(1.2, arrow_color);
+
+        let (tail_y, head_tip_y, head_base_y) = match dir {
+            ScrollArrowDirection::Up => (
+                wheel_bottom - 3.0,
+                wheel_top + 2.0,
+                wheel_top + 2.0 + head_height,
+            ),
+            ScrollArrowDirection::Down => (
+                wheel_top + 3.0,
+                wheel_bottom - 2.0,
+                wheel_bottom - 2.0 - head_height,
+            ),
+        };
+
+        // Shaft (double-stroke to create outlined/thicker visual)
+        painter.line_segment(
+            [
+                egui::pos2(center_x, tail_y),
+                egui::pos2(center_x, head_base_y),
+            ],
+            stroke_outer,
+        );
+        painter.line_segment(
+            [
+                egui::pos2(center_x, tail_y),
+                egui::pos2(center_x, head_base_y),
+            ],
+            stroke_inner,
+        );
+
+        // Chevron head
+        painter.line_segment(
+            [
+                egui::pos2(center_x - head_half_width, head_base_y),
+                egui::pos2(center_x, head_tip_y),
+            ],
+            stroke_outer,
+        );
+        painter.line_segment(
+            [
+                egui::pos2(center_x + head_half_width, head_base_y),
+                egui::pos2(center_x, head_tip_y),
+            ],
+            stroke_outer,
+        );
+
+        // Filled inner triangle for stronger arrowhead readability.
+        painter.add(egui::Shape::convex_polygon(
+            vec![
+                egui::pos2(center_x - (head_half_width - 0.8), head_base_y),
+                egui::pos2(center_x + (head_half_width - 0.8), head_base_y),
+                egui::pos2(center_x, head_tip_y),
+            ],
+            arrow_color,
+            egui::Stroke::NONE,
+        ));
+    }
 }

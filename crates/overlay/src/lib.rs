@@ -13,8 +13,8 @@ use anyhow::Result;
 use eframe::egui;
 use eframe::epaint::Rgba;
 use keyoverlay_core::{AppConfig, OverlayPosition, SharedConfig};
-use keyoverlay_input::{InputEvent, Key, MouseButton};
-use mouse_icon::{draw_mouse_icon, MouseHighlight};
+use keyoverlay_input::{InputEvent, Key, MouseButton, ScrollDirection};
+use mouse_icon::{draw_mouse_icon, MouseHighlight, ScrollArrowDirection};
 
 use win_region::{
     apply_test_region, apply_tray_region, disable_dwm_transitions, OverlayHwnd, PillRect,
@@ -33,6 +33,12 @@ const PILL_MIN_W: i32 = 88;
 const PILL_RADIUS: i32 = 18;
 const MOUSE_ICON_TOKEN: &str = "__MOUSE_ICON__";
 
+#[derive(Clone, Copy)]
+struct ScrollHighlight {
+    dir: ScrollArrowDirection,
+    last_event: Instant,
+}
+
 fn ensure_windows_overlay_transparency() {}
 
 #[derive(Clone)]
@@ -48,6 +54,7 @@ struct InputState {
     pending_left_press_moved: bool,
     display_chord: Option<String>,
     last_mouse_highlight: MouseHighlight,
+    scroll_highlight: Option<ScrollHighlight>,
 }
 
 impl InputState {
@@ -65,6 +72,7 @@ impl InputState {
             pending_left_press_moved: false,
             display_chord: None,
             last_mouse_highlight: MouseHighlight::None,
+            scroll_highlight: None,
         }
     }
 
@@ -161,12 +169,19 @@ impl InputState {
                     self.mouse_label = Some(format!("{} Click", e.button));
                 }
             }
-            InputEvent::MouseWheel(_) => {
+            InputEvent::MouseWheel(e) => {
                 self.last_mouse_activity = now;
                 self.mouse_icon_active = true;
                 self.last_mouse_highlight = MouseHighlight::None;
                 self.last_mouse_was_scroll = true;
                 self.mouse_label = Some("Scroll".to_string());
+                self.scroll_highlight = Some(ScrollHighlight {
+                    dir: match e.direction {
+                        ScrollDirection::Up => ScrollArrowDirection::Up,
+                        ScrollDirection::Down => ScrollArrowDirection::Down,
+                    },
+                    last_event: now,
+                });
             }
             InputEvent::MouseMove(_) => {
                 if self.pending_left_press_at.is_some() {
@@ -179,6 +194,7 @@ impl InputState {
     fn tick(&mut self, now: Instant, mouse_hold_for: Duration) {
         if !self.mouse_icon_visible(now, mouse_hold_for) {
             self.last_mouse_highlight = MouseHighlight::None;
+            self.scroll_highlight = None;
         }
 
         if let Some(press_at) = self.pending_left_press_at {
@@ -274,6 +290,40 @@ impl InputState {
         } else {
             MouseHighlight::None
         }
+    }
+
+    fn scroll_arrow_for_display(
+        &mut self,
+        now: Instant,
+        display_duration: Duration,
+        fade_duration: Duration,
+        show_mouse_icon: bool,
+        show_scroll: bool,
+    ) -> Option<(ScrollArrowDirection, f32)> {
+        if !show_mouse_icon || !show_scroll {
+            return None;
+        }
+
+        let highlight = self.scroll_highlight?;
+        let elapsed = now.duration_since(highlight.last_event);
+
+        if elapsed <= display_duration {
+            return Some((highlight.dir, 1.0));
+        }
+
+        if fade_duration.is_zero() {
+            self.scroll_highlight = None;
+            return None;
+        }
+
+        let fade_elapsed = elapsed - display_duration;
+        if fade_elapsed >= fade_duration {
+            self.scroll_highlight = None;
+            return None;
+        }
+
+        let alpha = 1.0 - (fade_elapsed.as_secs_f32() / fade_duration.as_secs_f32());
+        Some((highlight.dir, alpha.clamp(0.0, 1.0)))
     }
 }
 
@@ -590,6 +640,9 @@ impl eframe::App for App {
                 (self.draft.display_duration_secs + self.draft.fade_duration_secs).max(0.1),
             );
             let mouse_hold_for = overlay_hold_for;
+            let display_duration =
+                Duration::from_secs_f32(self.draft.display_duration_secs.max(0.0));
+            let fade_duration = Duration::from_secs_f32(self.draft.fade_duration_secs.max(0.0));
             let mouse_events_enabled = self.draft.show_mouse_clicks
                 || self.draft.show_scroll
                 || self.draft.show_mouse_icon;
@@ -621,6 +674,13 @@ impl eframe::App for App {
                 self.draft.show_scroll,
             );
             let mouse_highlight = self.input_state.mouse_highlight(now, mouse_hold_for);
+            let scroll_arrow = self.input_state.scroll_arrow_for_display(
+                now,
+                display_duration,
+                fade_duration,
+                self.draft.show_mouse_icon,
+                self.draft.show_scroll,
+            );
 
             let cfg = self.draft.clone();
             let visible_mouse_label = mouse_label.as_deref();
@@ -750,6 +810,7 @@ impl eframe::App for App {
                                         pill_rect,
                                         mouse_highlight,
                                         1.0,
+                                        scroll_arrow,
                                         &palette,
                                     );
                                 } else {
