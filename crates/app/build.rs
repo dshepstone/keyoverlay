@@ -1,8 +1,12 @@
 use std::env;
 use std::fs;
-use std::path::{Path, PathBuf};
+use std::path::PathBuf;
 
-const ICON_FILES: [(&str, u8); 7] = [
+#[cfg(target_os = "windows")]
+use image::GenericImageView;
+
+#[cfg(target_os = "windows")]
+const ICON_FILES: [(&str, u16); 7] = [
     ("icon_16px.png", 16),
     ("icon_24px.png", 24),
     ("icon_32px.png", 32),
@@ -22,46 +26,54 @@ fn main() {
 }
 
 #[cfg(not(target_os = "windows"))]
-fn main() {
-    for (file, _) in ICON_FILES {
-        println!("cargo:rerun-if-changed={file}");
-    }
-}
+fn main() {}
 
 #[cfg(target_os = "windows")]
 fn build_windows_icon() -> Result<(), Box<dyn std::error::Error>> {
     let out_dir = PathBuf::from(env::var("OUT_DIR")?);
     let ico_path = out_dir.join("keyoverlay.ico");
 
-    let mut png_entries = Vec::with_capacity(ICON_FILES.len());
-    for (file, size) in ICON_FILES {
-        let bytes = fs::read(file).map_err(|e| {
-            format!("missing required icon file '{file}' (expected in crates/app): {e}")
-        })?;
-        validate_png_dimensions(Path::new(file), &bytes, size, size)?;
-        png_entries.push((size, bytes));
+    let mut png_entries: Vec<(u16, Vec<u8>)> = Vec::with_capacity(ICON_FILES.len());
+
+    for (file, expected_size) in ICON_FILES {
+        let bytes = fs::read(file)
+            .unwrap_or_else(|e| panic!("failed to read required icon file '{file}': {e}"));
+
+        let image = image::load_from_memory(&bytes)
+            .unwrap_or_else(|e| panic!("failed to decode PNG '{file}': {e}"));
+        let (width, height) = image.dimensions();
+
+        if width != height || width != expected_size as u32 {
+            panic!(
+                "icon file '{file}' must be square and {expected_size}x{expected_size}, found {width}x{height}"
+            );
+        }
+
+        png_entries.push((expected_size, bytes));
     }
 
     let mut ico = Vec::new();
-    // ICONDIR
+    // ICONDIR header
     ico.extend_from_slice(&0u16.to_le_bytes()); // reserved
     ico.extend_from_slice(&1u16.to_le_bytes()); // type = icon
-    ico.extend_from_slice(&(png_entries.len() as u16).to_le_bytes()); // count
+    ico.extend_from_slice(&(png_entries.len() as u16).to_le_bytes()); // image count
 
+    // ICONDIRENTRY table starts after ICONDIR + all entries
     let mut offset = (6 + 16 * png_entries.len()) as u32;
     for (size, png_data) in &png_entries {
-        let dim = if *size == 256 { 0 } else { *size };
-        ico.push(dim); // width
-        ico.push(dim); // height
-        ico.push(0); // color count
+        let dim_byte: u8 = if *size == 256 { 0 } else { *size as u8 };
+        ico.push(dim_byte); // width (0 means 256)
+        ico.push(dim_byte); // height (0 means 256)
+        ico.push(0); // color palette count
         ico.push(0); // reserved
         ico.extend_from_slice(&1u16.to_le_bytes()); // color planes
-        ico.extend_from_slice(&32u16.to_le_bytes()); // bpp
-        ico.extend_from_slice(&(png_data.len() as u32).to_le_bytes());
-        ico.extend_from_slice(&offset.to_le_bytes());
+        ico.extend_from_slice(&32u16.to_le_bytes()); // bits per pixel
+        ico.extend_from_slice(&(png_data.len() as u32).to_le_bytes()); // image size
+        ico.extend_from_slice(&offset.to_le_bytes()); // image offset
         offset += png_data.len() as u32;
     }
 
+    // Image data blobs
     for (_, png_data) in &png_entries {
         ico.extend_from_slice(png_data);
     }
@@ -71,36 +83,6 @@ fn build_windows_icon() -> Result<(), Box<dyn std::error::Error>> {
     let mut res = winres::WindowsResource::new();
     res.set_icon(ico_path.to_string_lossy().as_ref());
     res.compile()?;
-
-    Ok(())
-}
-
-#[cfg(target_os = "windows")]
-fn validate_png_dimensions(
-    path: &Path,
-    bytes: &[u8],
-    expected_w: u8,
-    expected_h: u8,
-) -> Result<(), Box<dyn std::error::Error>> {
-    // PNG signature (8) + IHDR chunk length+type (8) + IHDR data starts at byte 16.
-    if bytes.len() < 24 || &bytes[0..8] != b"\x89PNG\r\n\x1a\n" {
-        return Err(format!("{} is not a valid PNG file", path.display()).into());
-    }
-
-    let width = u32::from_be_bytes([bytes[16], bytes[17], bytes[18], bytes[19]]);
-    let height = u32::from_be_bytes([bytes[20], bytes[21], bytes[22], bytes[23]]);
-
-    if width != expected_w as u32 || height != expected_h as u32 {
-        return Err(format!(
-            "{} has dimensions {}x{}, expected {}x{}",
-            path.display(),
-            width,
-            height,
-            expected_w,
-            expected_h
-        )
-        .into());
-    }
 
     Ok(())
 }
