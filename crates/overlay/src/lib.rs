@@ -587,24 +587,10 @@ impl eframe::App for App {
                 };
             let display_label = visible_mouse_label.or(preview_label);
 
-            let has_content = chord.is_some() || mouse_icon_visible || display_label.is_some();
-            let overlay_visible = if self.draft.positioning_mode || self.keep_overlay_alive {
-                true
-            } else {
-                self.input_state.overlay_visible(now) && has_content
-            };
-
+            let _has_content = chord.is_some() || mouse_icon_visible || display_label.is_some();
             let overlay_id = egui::ViewportId::from_hash_of("overlay");
 
-            if !overlay_visible {
-                ctx.send_viewport_cmd_to(overlay_id, egui::ViewportCommand::Visible(false));
-                self.last_region_geometry = None;
-                self.fixed_origin = None;
-                self.fixed_size = None;
-                self.last_live_origin = None;
-                self.keep_overlay_alive = false;
-                self.was_overlay_visible = false;
-            } else {
+            {
                 let palette = Palette::from_config(&self.draft);
                 let mouse_highlight = self.input_state.mouse_highlight();
 
@@ -617,7 +603,8 @@ impl eframe::App for App {
 
                 let is_activation = !self.was_overlay_visible;
                 let just_locked = was_positioning_mode && !self.draft.positioning_mode;
-                let (win_pos, win_size) = if self.draft.positioning_mode {
+                let is_live_adjust_mode = self.draft.positioning_mode || self.keep_overlay_alive;
+                let (win_pos, win_size) = if is_live_adjust_mode {
                     self.fixed_origin = None;
                     self.fixed_size = None;
                     let size = [geometry.width_points, geometry.height_points];
@@ -645,7 +632,7 @@ impl eframe::App for App {
                     egui::ViewportCommand::InnerSize(egui::vec2(win_size[0], win_size[1])),
                 );
 
-                if self.draft.positioning_mode || is_activation || just_locked {
+                if is_live_adjust_mode || is_activation || just_locked {
                     ctx.send_viewport_cmd_to(
                         overlay_id,
                         egui::ViewportCommand::OuterPosition(win_pos),
@@ -811,7 +798,14 @@ impl eframe::App for App {
                 );
             }
         } else {
+            let overlay_id = egui::ViewportId::from_hash_of("overlay");
+            ctx.send_viewport_cmd_to(overlay_id, egui::ViewportCommand::Visible(false));
+            self.last_region_geometry = None;
+            self.fixed_origin = None;
+            self.fixed_size = None;
+            self.last_live_origin = None;
             self.keep_overlay_alive = false;
+            self.was_overlay_visible = false;
         }
 
         ctx.request_repaint_after(Duration::from_millis(16));
