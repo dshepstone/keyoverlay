@@ -361,6 +361,7 @@ fn tab_position(app: &mut App, ui: &mut egui::Ui) {
 
     if (resolution_changed || scale_changed) && app.draft.position == OverlayPosition::Manual {
         app.sync_manual_to_lower_right();
+        app.preview_manual_position();
     }
 
     ui.add_space(12.0);
@@ -381,6 +382,7 @@ fn tab_position(app: &mut App, ui: &mut egui::Ui) {
             app.draft.position = selected_position;
             if app.draft.position == OverlayPosition::Manual {
                 app.sync_manual_to_lower_right();
+                app.preview_manual_position();
             }
         }
     });
@@ -390,15 +392,25 @@ fn tab_position(app: &mut App, ui: &mut egui::Ui) {
 
     let [display_w, display_h] = app.draft.scaled_display_size_points();
 
+    let mut manual_slider_changed = false;
+
     ui.horizontal(|ui| {
         ui.label("X position:");
-        ui.add(egui::Slider::new(&mut app.draft.overlay_x, 0.0..=display_w).suffix(" px"));
+        let response =
+            ui.add(egui::Slider::new(&mut app.draft.overlay_x, 0.0..=display_w).suffix(" px"));
+        manual_slider_changed |= response.changed();
     });
 
     ui.horizontal(|ui| {
         ui.label("Y position:");
-        ui.add(egui::Slider::new(&mut app.draft.overlay_y, 0.0..=display_h).suffix(" px"));
+        let response =
+            ui.add(egui::Slider::new(&mut app.draft.overlay_y, 0.0..=display_h).suffix(" px"));
+        manual_slider_changed |= response.changed();
     });
+
+    if manual_slider_changed && app.draft.position == OverlayPosition::Manual {
+        app.preview_manual_position();
+    }
 
     // When the user touches X/Y sliders, auto-switch to Manual mode so the
     // values take effect immediately without requiring a separate dropdown change.
@@ -413,6 +425,7 @@ fn tab_position(app: &mut App, ui: &mut egui::Ui) {
         );
     } else if ui.button("Snap manual position to lower-right").clicked() {
         app.sync_manual_to_lower_right();
+        app.preview_manual_position();
     }
 
     ui.add_space(12.0);

@@ -334,6 +334,7 @@ struct App {
     region_test_applied: bool,
     last_hwnd: Option<OverlayHwnd>,
     transitions_disabled: bool,
+    manual_preview_until: Option<Instant>,
 }
 
 impl App {
@@ -363,6 +364,7 @@ impl App {
             region_test_applied: false,
             last_hwnd: None,
             transitions_disabled: false,
+            manual_preview_until: None,
         }
     }
 
@@ -385,6 +387,10 @@ impl App {
         let (x, y) = self.draft.manual_lower_right_position();
         self.draft.overlay_x = x;
         self.draft.overlay_y = y;
+    }
+
+    fn preview_manual_position(&mut self) {
+        self.manual_preview_until = Some(Instant::now() + Duration::from_secs(2));
     }
 
     fn compute_overlay_position(&self, win_size: [f32; 2], _screen: [f32; 2]) -> egui::Pos2 {
@@ -590,12 +596,18 @@ impl eframe::App for App {
 
             self.input_state.tick(now, mouse_hold_for);
 
-            let overlay_visible = self.input_state.overlay_visible(
+            let mut overlay_visible = self.input_state.overlay_visible(
                 now,
                 overlay_hold_for,
                 self.draft.show_keyboard,
                 mouse_events_enabled,
             );
+            if self.manual_preview_until.is_some_and(|until| now <= until)
+                && self.active_tab == settings_window::SettingsTab::Position
+                && self.draft.position == OverlayPosition::Manual
+            {
+                overlay_visible = true;
+            }
             let mouse_icon_visible = self.draft.show_mouse_icon
                 && self.input_state.mouse_icon_visible(now, mouse_hold_for);
             let chord =
