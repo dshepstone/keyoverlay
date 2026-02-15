@@ -48,6 +48,32 @@ impl SettingsTab {
     }
 }
 
+fn load_header_icon_texture(ctx: &egui::Context) -> Option<egui::TextureHandle> {
+    let texture_id = egui::Id::new("settings_header_icon_texture");
+
+    if let Some(texture) = ctx.data_mut(|data| data.get_temp::<egui::TextureHandle>(texture_id)) {
+        return Some(texture);
+    }
+
+    let bytes = include_bytes!("../../app/icon.png");
+    let rgba = image::load_from_memory(bytes).ok()?.to_rgba8();
+    let size = [rgba.width() as usize, rgba.height() as usize];
+    let color_image = egui::ColorImage::from_rgba_unmultiplied(size, rgba.as_raw());
+
+    let texture = ctx.load_texture(
+        "settings_header_icon_texture",
+        color_image,
+        egui::TextureOptions {
+            magnification: egui::TextureFilter::Nearest,
+            minification: egui::TextureFilter::Linear,
+            ..Default::default()
+        },
+    );
+
+    ctx.data_mut(|data| data.insert_temp(texture_id, texture.clone()));
+    Some(texture)
+}
+
 // ── Draw settings in the main window ────────────────────────────────────
 
 pub fn draw_settings(ctx: &egui::Context, app: &mut App) {
@@ -64,6 +90,14 @@ pub fn draw_settings(ctx: &egui::Context, app: &mut App) {
         .show(ctx, |ui| {
             // ── Header with ON/OFF toggle ──
             ui.horizontal(|ui| {
+                if let Some(icon_texture) = load_header_icon_texture(ctx) {
+                    ui.add(egui::Image::new((
+                        icon_texture.id(),
+                        egui::vec2(26.0, 26.0),
+                    )));
+                    ui.add_space(10.0);
+                }
+
                 ui.heading(
                     egui::RichText::new("KeyOverlay")
                         .color(egui::Color32::from_rgb(220, 220, 240))
@@ -226,6 +260,11 @@ fn tab_appearance(app: &mut App, ui: &mut egui::Ui) {
     ui.horizontal(|ui| {
         ui.label("Font size:");
         ui.add(egui::Slider::new(&mut app.draft.font_size, 10.0..=32.0).suffix(" px"));
+    });
+
+    ui.horizontal(|ui| {
+        ui.label("Overlay scale:");
+        ui.add(egui::Slider::new(&mut app.draft.overlay_scale, 0.60..=2.00).suffix("x"));
     });
 
     ui.horizontal(|ui| {

@@ -8,6 +8,7 @@ rust-version = { workspace = true }
 [dependencies]
 anyhow = "1"
 eframe = "0.27"
+image = { version = "0.25", default-features = false, features = ["png"] }
 keyoverlay-core = { path = "../core" }
 keyoverlay-input = { path = "../input" }
 
