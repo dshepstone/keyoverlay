@@ -221,9 +221,7 @@ pub fn draw_settings(ctx: &egui::Context, app: &mut App) {
                 if let Some((msg, t)) = &app.status_msg {
                     if t.elapsed().as_secs() < 3 {
                         ui.add_space(8.0);
-                        ui.label(
-                            egui::RichText::new(msg).color(SUCCESS).size(12.0),
-                        );
+                        ui.label(egui::RichText::new(msg).color(SUCCESS).size(12.0));
                     }
                 }
             });
@@ -236,7 +234,11 @@ fn tab_appearance(app: &mut App, ui: &mut egui::Ui) {
     section_heading(ui, "Theme");
 
     ui.horizontal(|ui| {
-        ui.label(egui::RichText::new("Color theme:").color(TEXT_PRIMARY).size(13.0));
+        ui.label(
+            egui::RichText::new("Color theme:")
+                .color(TEXT_PRIMARY)
+                .size(13.0),
+        );
         ui.add_space(4.0);
         for theme in Theme::ALL {
             let selected = app.draft.theme == theme;
@@ -316,15 +318,11 @@ fn tab_behavior(app: &mut App, ui: &mut egui::Ui) {
     section_heading(ui, "Display");
 
     setting_row(ui, "Display duration", |ui| {
-        ui.add(
-            egui::Slider::new(&mut app.draft.display_duration_secs, 0.5..=10.0).suffix(" s"),
-        );
+        ui.add(egui::Slider::new(&mut app.draft.display_duration_secs, 0.5..=10.0).suffix(" s"));
     });
 
     setting_row(ui, "Fade duration", |ui| {
-        ui.add(
-            egui::Slider::new(&mut app.draft.fade_duration_secs, 0.1..=3.0).suffix(" s"),
-        );
+        ui.add(egui::Slider::new(&mut app.draft.fade_duration_secs, 0.1..=3.0).suffix(" s"));
     });
 
     setting_row(ui, "Max visible events", |ui| {
@@ -341,13 +339,23 @@ fn tab_behavior(app: &mut App, ui: &mut egui::Ui) {
     ui.checkbox(&mut app.draft.show_mouse_clicks, "Show mouse clicks");
     ui.checkbox(&mut app.draft.show_mouse_icon, "Show mouse icon in overlay");
     ui.checkbox(&mut app.draft.show_scroll, "Show scroll events");
+
+    ui.add_space(8.0);
+    ui.checkbox(
+        &mut app.draft.positioning_mode,
+        "Keep overlay visible for positioning (locks when input is detected)",
+    );
 }
 
 fn tab_position(app: &mut App, ui: &mut egui::Ui) {
     section_heading(ui, "Screen Position");
 
     ui.horizontal(|ui| {
-        ui.label(egui::RichText::new("Overlay position:").color(TEXT_PRIMARY).size(13.0));
+        ui.label(
+            egui::RichText::new("Overlay position:")
+                .color(TEXT_PRIMARY)
+                .size(13.0),
+        );
         egui::ComboBox::from_id_source("position_combo")
             .selected_text(app.draft.position.label())
             .show_ui(ui, |ui: &mut egui::Ui| {
@@ -360,9 +368,12 @@ fn tab_position(app: &mut App, ui: &mut egui::Ui) {
     ui.add_space(12.0);
     section_heading(ui, "Position (X / Y)");
 
+    let max_x = app.screen_size[0].max(1.0);
+    let max_y = app.screen_size[1].max(1.0);
+
     setting_row(ui, "X position", |ui| {
         ui.add(
-            egui::Slider::new(&mut app.draft.overlay_x, 0.0..=3840.0)
+            egui::Slider::new(&mut app.draft.overlay_x, 0.0..=max_x)
                 .suffix(" px")
                 .min_decimals(0)
                 .max_decimals(0),
@@ -371,12 +382,21 @@ fn tab_position(app: &mut App, ui: &mut egui::Ui) {
 
     setting_row(ui, "Y position", |ui| {
         ui.add(
-            egui::Slider::new(&mut app.draft.overlay_y, 0.0..=2160.0)
+            egui::Slider::new(&mut app.draft.overlay_y, 0.0..=max_y)
                 .suffix(" px")
                 .min_decimals(0)
                 .max_decimals(0),
         );
     });
+
+    ui.label(
+        egui::RichText::new(format!(
+            "Current screen: {:.0} x {:.0} px",
+            app.screen_size[0], app.screen_size[1]
+        ))
+        .size(11.0)
+        .color(TEXT_SECONDARY),
+    );
 
     if app.draft.position != OverlayPosition::Manual {
         ui.add_space(4.0);
@@ -392,7 +412,11 @@ fn tab_position(app: &mut App, ui: &mut egui::Ui) {
     ui.add_space(16.0);
 
     ui.horizontal(|ui| {
-        ui.label(egui::RichText::new("Layout direction:").color(TEXT_PRIMARY).size(13.0));
+        ui.label(
+            egui::RichText::new("Layout direction:")
+                .color(TEXT_PRIMARY)
+                .size(13.0),
+        );
         ui.add_space(4.0);
         for layout in OverlayLayout::ALL {
             let selected = app.draft.layout == layout;
@@ -495,16 +519,8 @@ fn tab_about(ui: &mut egui::Ui) {
     ];
     for feat in features {
         ui.horizontal(|ui| {
-            ui.label(
-                egui::RichText::new("\u{2022}")
-                    .size(13.0)
-                    .color(ACCENT),
-            );
-            ui.label(
-                egui::RichText::new(feat)
-                    .size(13.0)
-                    .color(TEXT_PRIMARY),
-            );
+            ui.label(egui::RichText::new("\u{2022}").size(13.0).color(ACCENT));
+            ui.label(egui::RichText::new(feat).size(13.0).color(TEXT_PRIMARY));
         });
     }
 }
@@ -534,11 +550,7 @@ fn setting_row(ui: &mut egui::Ui, label: &str, add_widget: impl FnOnce(&mut egui
 
 fn color_row(ui: &mut egui::Ui, label: &str, color: &mut keyoverlay_core::Color) {
     ui.horizontal(|ui| {
-        ui.label(
-            egui::RichText::new(label)
-                .color(TEXT_PRIMARY)
-                .size(13.0),
-        );
+        ui.label(egui::RichText::new(label).color(TEXT_PRIMARY).size(13.0));
         let ec = c2e(*color);
         let mut rgba = [ec.r(), ec.g(), ec.b()];
         if ui.color_edit_button_srgb(&mut rgba).changed() {

@@ -270,6 +270,8 @@ struct App {
     /// Fixed size established at activation, used for the entire visible period
     /// to prevent position drift when tray content changes width.
     fixed_size: Option<[f32; 2]>,
+    last_live_origin: Option<egui::Pos2>,
+    keep_overlay_alive: bool,
 }
 
 impl App {
@@ -292,6 +294,8 @@ impl App {
             fixed_origin: None,
             was_overlay_visible: false,
             fixed_size: None,
+            last_live_origin: None,
+            keep_overlay_alive: false,
         }
     }
 
@@ -519,7 +523,18 @@ impl eframe::App for App {
     }
 
     fn update(&mut self, ctx: &egui::Context, _frame: &mut eframe::Frame) {
+        let mut should_lock_positioning_mode = false;
         while let Ok(event) = self.rx.try_recv() {
+            let is_lock_event = matches!(
+                event,
+                InputEvent::KeyDown(_)
+                    | InputEvent::MouseDown(_)
+                    | InputEvent::MouseUp(_)
+                    | InputEvent::MouseWheel(_)
+            );
+            if self.draft.positioning_mode && is_lock_event {
+                should_lock_positioning_mode = true;
+            }
             self.input_state.apply_event(event);
         }
 
@@ -533,6 +548,16 @@ impl eframe::App for App {
         settings_window::draw_settings(ctx, self);
 
         if self.draft.overlay_enabled {
+            let was_positioning_mode = self.draft.positioning_mode;
+            if self.draft.positioning_mode {
+                self.keep_overlay_alive = true;
+            }
+            if should_lock_positioning_mode {
+                self.draft.positioning_mode = false;
+                self.keep_overlay_alive = true;
+                self.apply();
+            }
+
             let now = Instant::now();
             self.input_state.tick(now);
 
@@ -548,19 +573,24 @@ impl eframe::App for App {
                 None
             };
 
-            let has_content =
-                chord.is_some() || mouse_icon_visible || visible_mouse_label.is_some();
-            let overlay_visible = self.input_state.overlay_visible(now) && has_content;
+            let preview_label =
+                if self.draft.positioning_mode && chord.is_none() && !mouse_icon_visible {
+                    Some("Positioning Mode")
+                } else if self.keep_overlay_alive
+                    && chord.is_none()
+                    && !mouse_icon_visible
+                    && visible_mouse_label.is_none()
+                {
+                    Some("Overlay Locked")
+                } else {
+                    None
+                };
+            let display_label = visible_mouse_label.or(preview_label);
 
+            let _has_content = chord.is_some() || mouse_icon_visible || display_label.is_some();
             let overlay_id = egui::ViewportId::from_hash_of("overlay");
 
-            if !overlay_visible {
-                ctx.send_viewport_cmd_to(overlay_id, egui::ViewportCommand::Visible(false));
-                self.last_region_geometry = None;
-                self.fixed_origin = None;
-                self.fixed_size = None;
-                self.was_overlay_visible = false;
-            } else {
+            {
                 let palette = Palette::from_config(&self.draft);
                 let mouse_highlight = self.input_state.mouse_highlight();
 
@@ -568,40 +598,47 @@ impl eframe::App for App {
                     ctx,
                     chord.as_deref(),
                     mouse_icon_visible,
-                    visible_mouse_label,
+                    display_label,
                 );
 
-                // ── Activation: compute fixed position and size ONCE ──
-                // The overlay appears instantly at this position with no
-                // animation. Position and window size are locked for the
-                // entire visible period to prevent any movement.
                 let is_activation = !self.was_overlay_visible;
-                if is_activation {
+                let just_locked = was_positioning_mode && !self.draft.positioning_mode;
+                let is_live_adjust_mode = self.draft.positioning_mode || self.keep_overlay_alive;
+                let (win_pos, win_size) = if is_live_adjust_mode {
+                    self.fixed_origin = None;
+                    self.fixed_size = None;
                     let size = [geometry.width_points, geometry.height_points];
                     let pos = self.compute_overlay_position(size, self.screen_size);
-                    self.fixed_origin = Some(pos);
-                    self.fixed_size = Some(size);
-                }
+                    self.last_live_origin = Some(pos);
+                    (pos, size)
+                } else {
+                    if is_activation || just_locked {
+                        let size = [geometry.width_points, geometry.height_points];
+                        let pos = if just_locked {
+                            self.last_live_origin.unwrap_or_else(|| {
+                                self.compute_overlay_position(size, self.screen_size)
+                            })
+                        } else {
+                            self.compute_overlay_position(size, self.screen_size)
+                        };
+                        self.fixed_origin = Some(pos);
+                        self.fixed_size = Some(size);
+                    }
+                    (self.fixed_origin.unwrap(), self.fixed_size.unwrap())
+                };
 
-                let win_pos = self.fixed_origin.unwrap();
-                let win_size = self.fixed_size.unwrap();
-
-                // Always use the fixed size from activation to prevent
-                // the window from resizing (which causes repositioning).
                 ctx.send_viewport_cmd_to(
                     overlay_id,
                     egui::ViewportCommand::InnerSize(egui::vec2(win_size[0], win_size[1])),
                 );
 
-                // Only reposition on the activation frame.
-                if is_activation {
+                if is_live_adjust_mode || is_activation || just_locked {
                     ctx.send_viewport_cmd_to(
                         overlay_id,
                         egui::ViewportCommand::OuterPosition(win_pos),
                     );
                 }
 
-                // Apply rounded region before showing.
                 self.maybe_apply_window_region(&geometry);
                 ctx.send_viewport_cmd_to(overlay_id, egui::ViewportCommand::Visible(true));
 
@@ -653,10 +690,8 @@ impl eframe::App for App {
                                 }
 
                                 if region_debug_bounds_enabled() {
-                                    let window_debug_stroke = egui::Stroke::new(
-                                        1.0,
-                                        egui::Color32::from_rgb(0, 255, 0),
-                                    );
+                                    let window_debug_stroke =
+                                        egui::Stroke::new(1.0, egui::Color32::from_rgb(0, 255, 0));
                                     let rounding = egui::Rounding::same(0.0);
                                     paint_rect_stroke_inside(
                                         ui,
@@ -711,12 +746,7 @@ impl eframe::App for App {
                                             egui::Direction::TopDown,
                                         ),
                                     );
-                                    draw_mouse_icon(
-                                        &mut icon_ui,
-                                        mouse_highlight,
-                                        1.0,
-                                        &palette,
-                                    );
+                                    draw_mouse_icon(&mut icon_ui, mouse_highlight, 1.0, &palette);
                                 }
 
                                 // Draw each pill with theme-aware colors.
@@ -767,6 +797,15 @@ impl eframe::App for App {
                     },
                 );
             }
+        } else {
+            let overlay_id = egui::ViewportId::from_hash_of("overlay");
+            ctx.send_viewport_cmd_to(overlay_id, egui::ViewportCommand::Visible(false));
+            self.last_region_geometry = None;
+            self.fixed_origin = None;
+            self.fixed_size = None;
+            self.last_live_origin = None;
+            self.keep_overlay_alive = false;
+            self.was_overlay_visible = false;
         }
 
         ctx.request_repaint_after(Duration::from_millis(16));
