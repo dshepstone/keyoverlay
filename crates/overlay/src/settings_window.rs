@@ -1,7 +1,6 @@
 use eframe::egui;
 use keyoverlay_core::{OverlayLayout, OverlayPosition, Theme};
 
-
 use crate::theme::{c2e, e2c};
 use crate::App;
 
@@ -220,7 +219,10 @@ fn tab_appearance(app: &mut App, ui: &mut egui::Ui) {
 
     ui.horizontal(|ui| {
         ui.label("Background opacity:");
-        ui.add(egui::Slider::new(&mut app.draft.background_opacity, 0.0..=1.0));
+        ui.add(egui::Slider::new(
+            &mut app.draft.background_opacity,
+            0.0..=1.0,
+        ));
     });
 
     ui.horizontal(|ui| {
@@ -308,9 +310,11 @@ fn tab_position(app: &mut App, ui: &mut egui::Ui) {
     if app.draft.position != OverlayPosition::Manual {
         ui.add_space(4.0);
         ui.label(
-            egui::RichText::new("Tip: select \"Manual (X/Y)\" above to use these sliders for positioning.")
-                .size(11.0)
-                .color(egui::Color32::from_rgb(140, 140, 170)),
+            egui::RichText::new(
+                "Tip: select \"Manual (X/Y)\" above to use these sliders for positioning.",
+            )
+            .size(11.0)
+            .color(egui::Color32::from_rgb(140, 140, 170)),
         );
     }
 
