@@ -9,7 +9,7 @@ use std::time::Instant;
 
 use anyhow::Result;
 use eframe::egui;
-use keyoverlay_core::{AppConfig, SharedConfig};
+use keyoverlay_core::{AppConfig, OverlayPosition, SharedConfig};
 use keyoverlay_input::{InputEvent, MouseButton};
 
 use mouse_icon::{draw_mouse_icon, MouseHighlight};
@@ -18,43 +18,12 @@ use theme::Palette;
 
 const OVERLAY_VIEWPORT_TITLE: &str = "KeyOverlayOverlay";
 
-#[cfg(target_os = "windows")]
-fn ensure_windows_overlay_transparency() {
-    use std::sync::atomic::{AtomicBool, Ordering};
-
-    use windows_sys::Win32::UI::WindowsAndMessaging::{
-        FindWindowW, GetWindowLongPtrW, SetLayeredWindowAttributes, SetWindowLongPtrW, GWL_EXSTYLE,
-        LWA_ALPHA, WS_EX_LAYERED, WS_EX_TRANSPARENT,
-    };
-
-    static APPLIED: AtomicBool = AtomicBool::new(false);
-    if APPLIED.load(Ordering::Relaxed) {
-        return;
-    }
-
-    let mut title_wide: Vec<u16> = OVERLAY_VIEWPORT_TITLE.encode_utf16().collect();
-    title_wide.push(0);
-
-    // Fallback for Windows where compositor path can still produce an opaque backdrop:
-    // force layered+per-pixel alpha on the overlay HWND only.
-    let hwnd = unsafe { FindWindowW(std::ptr::null(), title_wide.as_ptr()) };
-    if hwnd.is_null() {
-        return;
-    }
-
-    unsafe {
-        let ex_style = GetWindowLongPtrW(hwnd, GWL_EXSTYLE) as u32;
-        let layered_style = ex_style | WS_EX_LAYERED | WS_EX_TRANSPARENT;
-        SetWindowLongPtrW(hwnd, GWL_EXSTYLE, layered_style as isize);
-        SetLayeredWindowAttributes(hwnd, 0, 255, LWA_ALPHA);
-
-        // Keep per-pixel alpha via layered style; avoids extra DWM API requirements.
-    }
-
-    APPLIED.store(true, Ordering::Relaxed);
-}
-
-#[cfg(not(target_os = "windows"))]
+// On Windows the overlay transparency is handled entirely by eframe's
+// `.with_transparent(true)` and `.with_mouse_passthrough(true)`.
+// Previous attempts to manually apply WS_EX_LAYERED + WS_EX_TRANSPARENT
+// via Win32 APIs conflicted with eframe's own compositing and caused the
+// window to be invisible on the desktop (only visible in the taskbar
+// preview).  We intentionally leave this as a no-op now.
 fn ensure_windows_overlay_transparency() {}
 
 // ── Combined App ────────────────────────────────────────────────────────
@@ -72,6 +41,9 @@ struct App {
     rx: Receiver<InputEvent>,
     events: VecDeque<DisplayEvent>,
     last_mouse_btn: Option<(MouseButton, Instant)>,
+
+    /// Detected screen size (updated each frame from the main window context).
+    screen_size: [f32; 2],
 }
 
 impl App {
@@ -85,6 +57,7 @@ impl App {
             rx,
             events: VecDeque::with_capacity(16),
             last_mouse_btn: None,
+            screen_size: [1920.0, 1080.0],
         }
     }
 
@@ -159,6 +132,32 @@ impl App {
         MouseHighlight::None
     }
 
+    /// Compute the overlay window position based on config and actual screen size.
+    fn compute_overlay_position(&self, win_size: [f32; 2], screen: [f32; 2]) -> egui::Pos2 {
+        let cfg = &self.draft;
+        if cfg.position == OverlayPosition::Manual {
+            return egui::pos2(cfg.overlay_x, cfg.overlay_y);
+        }
+
+        let sw = screen[0];
+        let sh = screen[1];
+        let w = win_size[0];
+        let h = win_size[1];
+        let mx = cfg.margin_x;
+        let my = cfg.margin_y;
+
+        match cfg.position {
+            OverlayPosition::BottomCenter => egui::pos2((sw - w) / 2.0, sh - h - my),
+            OverlayPosition::BottomLeft => egui::pos2(mx, sh - h - my),
+            OverlayPosition::BottomRight => egui::pos2(sw - w - mx, sh - h - my),
+            OverlayPosition::TopCenter => egui::pos2((sw - w) / 2.0, my),
+            OverlayPosition::TopLeft => egui::pos2(mx, my),
+            OverlayPosition::TopRight => egui::pos2(sw - w - mx, my),
+            OverlayPosition::Center => egui::pos2((sw - w) / 2.0, (sh - h) / 2.0),
+            OverlayPosition::Manual => egui::pos2(cfg.overlay_x, cfg.overlay_y),
+        }
+    }
+
     fn mouse_alpha(&self) -> f32 {
         let cfg = &self.draft;
         if let Some((_btn, t)) = self.last_mouse_btn {
@@ -175,9 +174,11 @@ impl App {
     }
 }
 
+/// Padding around the content inside the rounded overlay background.
+const OVERLAY_PADDING: f32 = 10.0;
+
 impl eframe::App for App {
     fn clear_color(&self, _visuals: &egui::Visuals) -> [f32; 4] {
-        // Clear to alpha=0 so only explicitly painted widgets remain visible.
         egui::Color32::TRANSPARENT.to_normalized_gamma_f32()
     }
 
@@ -194,33 +195,52 @@ impl eframe::App for App {
         // Keep live config in sync (overlay reads from draft directly).
         *self.config.lock().unwrap() = self.draft.clone();
 
+        // ── Detect screen size from the main window ──
+        let screen_rect = ctx.input(|i| i.screen_rect());
+        if screen_rect.width() > 100.0 && screen_rect.height() > 100.0 {
+            self.screen_size = [screen_rect.width(), screen_rect.height()];
+        }
+
         // ── Render settings (main window) ──
         settings_window::draw_settings(ctx, self);
 
         // ── Render overlay (child viewport) ──
+        // Always show the overlay when enabled so the mouse icon and
+        // keystrokes are visible.
         if self.draft.overlay_enabled {
             let cfg = self.draft.clone();
             let palette = Palette::from_config(&cfg);
             let events: Vec<DisplayEvent> = self.events.iter().rev().cloned().collect();
             let mouse_hl = self.mouse_highlight();
             let mouse_a = self.mouse_alpha();
+
+            let win_w = cfg.overlay_width;
+            let win_h = cfg.overlay_height;
+            let win_pos = self.compute_overlay_position([win_w, win_h], self.screen_size);
+
             ctx.show_viewport_immediate(
                 egui::ViewportId::from_hash_of("overlay"),
                 egui::ViewportBuilder::default()
-                    .with_inner_size([cfg.overlay_width, cfg.overlay_height])
+                    .with_inner_size([win_w, win_h])
+                    .with_position(win_pos)
                     .with_title(OVERLAY_VIEWPORT_TITLE)
                     .with_decorations(false)
                     .with_always_on_top()
                     .with_resizable(false)
-                    .with_transparent(true) // Request per-pixel alpha for the overlay viewport.
+                    .with_transparent(true)
                     .with_mouse_passthrough(true),
                 move |ctx, _class| {
                     ensure_windows_overlay_transparency();
 
-                    let overlay_size = egui::vec2(cfg.overlay_width, cfg.overlay_height);
+                    // Override visuals so the viewport background is transparent;
+                    // we paint our own rounded background below.
+                    let mut vis = egui::Visuals::dark();
+                    vis.panel_fill = egui::Color32::TRANSPARENT;
+                    vis.window_fill = egui::Color32::TRANSPARENT;
+                    vis.extreme_bg_color = egui::Color32::TRANSPARENT;
+                    ctx.set_visuals(vis);
 
                     egui::CentralPanel::default()
-                        // Keep the overlay viewport fully transparent outside explicit widgets.
                         .frame(egui::Frame::none().fill(egui::Color32::TRANSPARENT))
                         .show(ctx, |ui| {
                             let now = Instant::now();
@@ -228,9 +248,28 @@ impl eframe::App for App {
                             let f = cfg.fade_duration_secs as f64;
                             let rounding = cfg.pill_rounding;
                             let opacity = cfg.overlay_opacity;
+                            let panel_rect = ui.available_rect_before_wrap();
 
-                            ui.set_min_size(overlay_size);
-                            ui.horizontal(|ui| {
+                            // Draw a rounded semi-transparent background behind
+                            // all content so the overlay is always visible.
+                            let bg_alpha =
+                                (cfg.background_opacity * opacity * 255.0) as u8;
+                            let bg_color =
+                                egui::Color32::from_rgba_unmultiplied(30, 30, 40, bg_alpha);
+                            ui.painter().rect_filled(
+                                panel_rect,
+                                rounding + 4.0,
+                                bg_color,
+                            );
+
+                            // Content area inside padding.
+                            let content_rect = panel_rect.shrink(OVERLAY_PADDING);
+                            let mut content_ui = ui.child_ui(
+                                content_rect,
+                                egui::Layout::left_to_right(egui::Align::Min),
+                            );
+
+                            content_ui.horizontal(|ui| {
                                 if cfg.show_mouse_icon {
                                     let a = mouse_a * opacity;
                                     draw_mouse_icon(ui, mouse_hl, a, &palette);
@@ -274,8 +313,6 @@ pub fn run(rx: Receiver<InputEvent>, config: SharedConfig) -> Result<()> {
             .with_inner_size([520.0, 600.0])
             .with_resizable(true)
             .with_min_inner_size([420.0, 400.0])
-            // Required for transparent child viewports on eframe's native backends.
-            // Without this, the renderer may composite with an opaque surface (black).
             .with_transparent(true),
         ..Default::default()
     };

@@ -36,10 +36,11 @@ pub enum OverlayPosition {
     TopLeft,
     TopRight,
     Center,
+    Manual,
 }
 
 impl OverlayPosition {
-    pub const ALL: [OverlayPosition; 7] = [
+    pub const ALL: [OverlayPosition; 8] = [
         OverlayPosition::BottomCenter,
         OverlayPosition::BottomLeft,
         OverlayPosition::BottomRight,
@@ -47,6 +48,7 @@ impl OverlayPosition {
         OverlayPosition::TopLeft,
         OverlayPosition::TopRight,
         OverlayPosition::Center,
+        OverlayPosition::Manual,
     ];
 
     pub fn label(self) -> &'static str {
@@ -58,8 +60,17 @@ impl OverlayPosition {
             OverlayPosition::TopLeft => "Top Left",
             OverlayPosition::TopRight => "Top Right",
             OverlayPosition::Center => "Center",
+            OverlayPosition::Manual => "Manual (X/Y)",
         }
     }
+}
+
+fn default_overlay_x() -> f32 {
+    500.0
+}
+
+fn default_overlay_y() -> f32 {
+    500.0
 }
 
 // ── Overlay Layout ───────────────────────────────────────────────────────
@@ -145,6 +156,12 @@ pub struct AppConfig {
     pub margin_y: f32,
     pub overlay_width: f32,
     pub overlay_height: f32,
+
+    // Manual pixel position (used when position == Manual).
+    #[serde(default = "default_overlay_x")]
+    pub overlay_x: f32,
+    #[serde(default = "default_overlay_y")]
+    pub overlay_y: f32,
 }
 
 impl Default for AppConfig {
@@ -153,7 +170,7 @@ impl Default for AppConfig {
             theme: Theme::Dark,
             font_size: 18.0,
             overlay_opacity: 1.0,
-            background_opacity: 0.0,
+            background_opacity: 0.7,
             pill_rounding: 8.0,
 
             custom_key_bg: Color::rgb(55, 55, 75),
@@ -175,12 +192,14 @@ impl Default for AppConfig {
             show_mouse_icon: true,
             show_scroll: true,
 
-            position: OverlayPosition::BottomCenter,
+            position: OverlayPosition::TopRight,
             layout: OverlayLayout::Vertical,
             margin_x: 40.0,
             margin_y: 60.0,
             overlay_width: 280.0,
             overlay_height: 200.0,
+            overlay_x: 500.0,
+            overlay_y: 500.0,
         }
     }
 }
