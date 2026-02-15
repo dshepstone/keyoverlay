@@ -10,16 +10,26 @@ use serde::{Deserialize, Serialize};
 pub enum Theme {
     Dark,
     Light,
+    Minimal,
+    HighContrast,
     Custom,
 }
 
 impl Theme {
-    pub const ALL: [Theme; 3] = [Theme::Dark, Theme::Light, Theme::Custom];
+    pub const ALL: [Theme; 5] = [
+        Theme::Dark,
+        Theme::Light,
+        Theme::Minimal,
+        Theme::HighContrast,
+        Theme::Custom,
+    ];
 
     pub fn label(self) -> &'static str {
         match self {
             Theme::Dark => "Dark",
             Theme::Light => "Light",
+            Theme::Minimal => "Minimal",
+            Theme::HighContrast => "High Contrast",
             Theme::Custom => "Custom",
         }
     }
@@ -136,6 +146,8 @@ pub struct AppConfig {
     pub custom_mouse_fg: Color,
     pub custom_scroll_bg: Color,
     pub custom_scroll_fg: Color,
+    pub custom_tray_bg: Color,
+    pub custom_tray_border: Color,
 
     // ── State ──
     pub overlay_enabled: bool,
@@ -181,6 +193,8 @@ impl Default for AppConfig {
             custom_mouse_fg: Color::rgb(255, 255, 255),
             custom_scroll_bg: Color::rgb(80, 170, 120),
             custom_scroll_fg: Color::rgb(255, 255, 255),
+            custom_tray_bg: Color::rgba(255, 255, 255, 230),
+            custom_tray_border: Color::rgba(200, 200, 210, 0),
 
             overlay_enabled: true,
 
