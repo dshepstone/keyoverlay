@@ -274,6 +274,10 @@ fn tab_behavior(app: &mut App, ui: &mut egui::Ui) {
 
     ui.checkbox(&mut app.draft.show_keyboard, "Show keyboard strokes");
     ui.checkbox(&mut app.draft.show_mouse_clicks, "Show mouse clicks");
+    ui.checkbox(
+        &mut app.draft.show_mouse_event_text,
+        "Show mouse click text (Left/Right/Middle)",
+    );
     ui.checkbox(&mut app.draft.show_mouse_icon, "Show mouse icon in overlay");
     ui.checkbox(&mut app.draft.show_scroll, "Show scroll events");
 }

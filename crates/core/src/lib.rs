@@ -65,6 +65,10 @@ impl OverlayPosition {
     }
 }
 
+fn default_show_mouse_event_text() -> bool {
+    true
+}
+
 fn default_overlay_x() -> f32 {
     500.0
 }
@@ -147,6 +151,8 @@ pub struct AppConfig {
     pub show_keyboard: bool,
     pub show_mouse_clicks: bool,
     pub show_mouse_icon: bool,
+    #[serde(default = "default_show_mouse_event_text")]
+    pub show_mouse_event_text: bool,
     pub show_scroll: bool,
 
     // ── Position & Layout ──
@@ -190,6 +196,7 @@ impl Default for AppConfig {
             show_keyboard: true,
             show_mouse_clicks: true,
             show_mouse_icon: true,
+            show_mouse_event_text: true,
             show_scroll: true,
 
             position: OverlayPosition::TopRight,

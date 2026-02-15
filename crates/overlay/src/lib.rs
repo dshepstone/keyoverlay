@@ -218,6 +218,7 @@ impl InputState {
         now: Instant,
         hold_for: Duration,
         show_mouse_clicks: bool,
+        show_mouse_event_text: bool,
         show_scroll: bool,
     ) -> Option<String> {
         if !self.mouse_icon_visible(now, hold_for) {
@@ -228,6 +229,9 @@ impl InputState {
             return None;
         }
         if !self.last_mouse_was_scroll && !show_mouse_clicks {
+            return None;
+        }
+        if !show_mouse_event_text {
             return None;
         }
 
@@ -588,6 +592,7 @@ impl eframe::App for App {
                 now,
                 mouse_hold_for,
                 self.draft.show_mouse_clicks,
+                self.draft.show_mouse_event_text,
                 self.draft.show_scroll,
             );
             let mouse_highlight = self.input_state.mouse_highlight(now, mouse_hold_for);
