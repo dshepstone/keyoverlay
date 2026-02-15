@@ -2,7 +2,6 @@ mod mouse_icon;
 mod overlay_window;
 mod settings_window;
 mod theme;
-mod win_region;
 
 use std::collections::HashSet;
 use std::sync::mpsc::Receiver;
@@ -17,20 +16,12 @@ use keyoverlay_input::{InputEvent, Key, MouseButton};
 use mouse_icon::{draw_mouse_icon, MouseHighlight};
 use overlay_window::{draw_chord_pill, draw_event_pill};
 use theme::Palette;
-use win_region::{apply_window_region_by_title, RegionRect};
 
 const OVERLAY_VIEWPORT_TITLE: &str = "KeyOverlayOverlay";
 const OVERLAY_IDLE_HIDE_MS: u64 = 700;
 const MOUSE_ICON_IDLE_HIDE_MS: u64 = 450;
 const OVERLAY_PADDING: f32 = 14.0;
 const LARGE_KEY_FONT_BOOST: f32 = 14.0;
-
-#[derive(Debug, Clone, PartialEq)]
-struct OverlayGeometry {
-    width: f32,
-    height: f32,
-    pill_rects: Vec<RegionRect>,
-}
 
 fn ensure_windows_overlay_transparency() {}
 
@@ -144,7 +135,6 @@ struct App {
     rx: Receiver<InputEvent>,
     input_state: InputState,
     screen_size: [f32; 2],
-    last_geometry: Option<OverlayGeometry>,
 }
 
 impl App {
@@ -162,7 +152,6 @@ impl App {
             rx,
             input_state: InputState::new(),
             screen_size: [1920.0, 1080.0],
-            last_geometry: None,
         }
     }
 
@@ -231,133 +220,6 @@ impl App {
     }
 }
 
-fn measure_text(ctx: &egui::Context, text: &str, font_size: f32) -> egui::Vec2 {
-    let galley = ctx.fonts(|fonts| {
-        fonts.layout_no_wrap(
-            text.to_owned(),
-            egui::FontId::proportional(font_size),
-            egui::Color32::WHITE,
-        )
-    });
-    galley.size()
-}
-
-fn build_overlay_geometry(
-    &self,
-    ctx: &egui::Context,
-    chord: Option<&str>,
-    mouse_visible: bool,
-    mouse_event_label: Option<&str>,
-) -> OverlayGeometry {
-    let padding = OVERLAY_PADDING;
-    let chord_font = self.draft.font_size + LARGE_KEY_FONT_BOOST;
-    let event_font = self.draft.font_size + 4.0;
-
-    let mut chord_width = 0.0_f32;
-    let mut chord_height = 0.0_f32;
-    let mut chord_rects: Vec<RegionRect> = Vec::new();
-
-    if let Some(chord) = chord {
-        let parts: Vec<&str> = chord.split(" + ").collect();
-        let mut x = 0.0_f32;
-        let row_h = chord_font + 20.0;
-        chord_height = row_h;
-        for (idx, part) in parts.iter().enumerate() {
-            let size = Self::measure_text(ctx, part, chord_font);
-            let seg_w = size.x + 24.0;
-            chord_rects.push(RegionRect {
-                x: x.round() as i32,
-                y: 0,
-                w: seg_w.ceil() as i32,
-                h: row_h.ceil() as i32,
-                radius: self.draft.pill_rounding.round() as i32,
-            });
-            x += seg_w;
-            if idx < parts.len() - 1 {
-                x += 26.0;
-            }
-        }
-        chord_width = x;
-    }
-
-    let mut event_width = 0.0_f32;
-    let mut event_height = 0.0_f32;
-    if let Some(label) = mouse_event_label {
-        let size = Self::measure_text(ctx, label, event_font);
-        event_width = size.x + 32.0;
-        event_height = size.y + 16.0;
-    }
-
-    let text_w = chord_width.max(event_width);
-    let mut text_h = 0.0_f32;
-    if chord_height > 0.0 {
-        text_h += chord_height;
-    }
-    if chord_height > 0.0 && event_height > 0.0 {
-        text_h += 10.0;
-    }
-    if event_height > 0.0 {
-        text_h += event_height;
-    }
-
-    let mouse_w = if mouse_visible { 48.0 } else { 0.0 };
-    let mouse_h = if mouse_visible { 68.0 } else { 0.0 };
-    let mouse_gap = if mouse_visible && text_w > 0.0 {
-        16.0
-    } else {
-        0.0
-    };
-
-    let content_w = mouse_w + mouse_gap + text_w;
-    let content_h = mouse_h.max(text_h);
-
-    let window_w = (content_w + padding * 2.0).ceil().max(1.0);
-    let window_h = (content_h + padding * 2.0).ceil().max(1.0);
-
-    let mut rects = Vec::new();
-    let text_x = padding + mouse_w + mouse_gap;
-    let text_y = padding + (content_h - text_h) / 2.0;
-
-    for mut r in chord_rects {
-        r.x = (text_x + r.x as f32).round() as i32;
-        r.y = text_y.round() as i32;
-        rects.push(r);
-    }
-
-    if let Some(_label) = mouse_event_label {
-        let y = text_y
-            + if chord_height > 0.0 {
-                chord_height + 10.0
-            } else {
-                0.0
-            };
-        rects.push(RegionRect {
-            x: text_x.round() as i32,
-            y: y.round() as i32,
-            w: event_width.ceil() as i32,
-            h: event_height.ceil() as i32,
-            radius: self.draft.pill_rounding.round() as i32,
-        });
-    }
-
-    if mouse_visible {
-        let mouse_y = padding + (content_h - mouse_h) / 2.0;
-        rects.push(RegionRect {
-            x: padding.round() as i32,
-            y: mouse_y.round() as i32,
-            w: mouse_w as i32,
-            h: mouse_h as i32,
-            radius: 16,
-        });
-    }
-
-    OverlayGeometry {
-        width: window_w,
-        height: window_h,
-        pill_rects: rects,
-    }
-}
-
 impl eframe::App for App {
     fn clear_color(&self, _visuals: &egui::Visuals) -> [f32; 4] {
         Rgba::TRANSPARENT.to_array()
@@ -388,54 +250,22 @@ impl eframe::App for App {
 
             let cfg = self.draft.clone();
             let palette = Palette::from_config(&cfg);
-            let mouse_label_for_geom = if mouse_event_visible {
-                mouse_event_label.as_deref()
-            } else {
-                None
-            };
 
-            let geometry = self.build_overlay_geometry(
-                ctx,
-                chord.as_deref(),
-                mouse_visible,
-                mouse_label_for_geom,
-            );
-            let win_pos =
-                self.compute_overlay_position([geometry.width, geometry.height], self.screen_size);
-            let overlay_id = egui::ViewportId::from_hash_of("overlay");
-
-            if !overlay_visible {
-                ctx.send_viewport_cmd_to(overlay_id, egui::ViewportCommand::Visible(false));
-                apply_window_region_by_title(OVERLAY_VIEWPORT_TITLE, &[]);
-                self.last_geometry = None;
-            } else {
-                ctx.send_viewport_cmd_to(overlay_id, egui::ViewportCommand::Visible(true));
-                ctx.send_viewport_cmd_to(
-                    overlay_id,
-                    egui::ViewportCommand::InnerSize(egui::vec2(geometry.width, geometry.height)),
-                );
-                ctx.send_viewport_cmd_to(overlay_id, egui::ViewportCommand::OuterPosition(win_pos));
-
-                if self.last_geometry.as_ref() != Some(&geometry) {
-                    // On Windows, shaping avoids the black rectangular swapchain artifact
-                    // when per-pixel alpha compositing is unreliable.
-                    apply_window_region_by_title(OVERLAY_VIEWPORT_TITLE, &geometry.pill_rects);
-                    self.last_geometry = Some(geometry.clone());
-                }
-            }
+            let win_w = cfg.overlay_width;
+            let win_h = cfg.overlay_height;
+            let win_pos = self.compute_overlay_position([win_w, win_h], self.screen_size);
 
             ctx.show_viewport_immediate(
-                overlay_id,
+                egui::ViewportId::from_hash_of("overlay"),
                 egui::ViewportBuilder::default()
-                    .with_inner_size([geometry.width, geometry.height])
+                    .with_inner_size([win_w, win_h])
                     .with_position(win_pos)
                     .with_title(OVERLAY_VIEWPORT_TITLE)
                     .with_decorations(false)
                     .with_always_on_top()
                     .with_resizable(false)
                     .with_transparent(true)
-                    .with_mouse_passthrough(true)
-                    .with_visible(overlay_visible),
+                    .with_mouse_passthrough(true),
                 move |ctx, _class| {
                     ensure_windows_overlay_transparency();
 
@@ -508,11 +338,6 @@ impl eframe::App for App {
                         });
                 },
             );
-        } else {
-            let overlay_id = egui::ViewportId::from_hash_of("overlay");
-            ctx.send_viewport_cmd_to(overlay_id, egui::ViewportCommand::Visible(false));
-            apply_window_region_by_title(OVERLAY_VIEWPORT_TITLE, &[]);
-            self.last_geometry = None;
         }
 
         ctx.request_repaint_after(Duration::from_millis(16));
