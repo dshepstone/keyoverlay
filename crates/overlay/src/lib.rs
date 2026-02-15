@@ -42,6 +42,7 @@ struct InputState {
     pressed_keys: HashSet<Key>,
     pressed_mouse_buttons: HashSet<MouseButton>,
     last_any_activity: Instant,
+    last_key_activity: Instant,
     last_mouse_activity: Instant,
     mouse_icon_active: bool,
     mouse_label: Option<String>,
@@ -57,6 +58,7 @@ impl InputState {
             pressed_keys: HashSet::new(),
             pressed_mouse_buttons: HashSet::new(),
             last_any_activity: now,
+            last_key_activity: now,
             last_mouse_activity: now,
             mouse_icon_active: false,
             mouse_label: None,
@@ -105,11 +107,13 @@ impl InputState {
                 self.pressed_keys.insert(e.key);
                 self.refresh_last_chord_from_pressed();
                 self.last_any_activity = now;
+                self.last_key_activity = now;
             }
             InputEvent::KeyUp(e) => {
                 self.pressed_keys.remove(&e.key);
                 self.refresh_last_chord_from_pressed();
                 self.last_any_activity = now;
+                self.last_key_activity = now;
             }
             InputEvent::MouseDown(e) => {
                 self.pressed_mouse_buttons.insert(e.button);
@@ -151,13 +155,9 @@ impl InputState {
                 self.mouse_label = Some("Scroll".to_string());
             }
             InputEvent::MouseMove(_) => {
-                self.last_any_activity = now;
-                self.last_mouse_activity = now;
-                self.mouse_icon_active = true;
                 if self.pending_left_press_at.is_some() {
                     self.pending_left_press_moved = true;
                 }
-                self.mouse_label = None;
             }
         }
     }
@@ -204,7 +204,7 @@ impl InputState {
             );
         }
 
-        if now.duration_since(self.last_any_activity) < Duration::from_millis(OVERLAY_IDLE_HIDE_MS)
+        if now.duration_since(self.last_key_activity) < Duration::from_millis(OVERLAY_IDLE_HIDE_MS)
         {
             return self.last_chord.clone();
         }
