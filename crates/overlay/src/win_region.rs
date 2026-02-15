@@ -93,6 +93,7 @@ mod imp {
 pub use imp::{apply_test_region, apply_tray_region};
 
 #[cfg(not(target_os = "windows"))]
+#[allow(dead_code)]
 pub fn apply_test_region(_title: &str) -> Option<isize> {
     None
 }

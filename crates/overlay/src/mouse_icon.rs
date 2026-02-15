@@ -13,6 +13,7 @@ pub enum MouseHighlight {
 }
 
 impl MouseHighlight {
+    #[allow(dead_code)]
     pub fn from_button(btn: MouseButton) -> Self {
         match btn {
             MouseButton::Left => Self::Left,

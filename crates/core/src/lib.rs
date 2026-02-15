@@ -10,16 +10,26 @@ use serde::{Deserialize, Serialize};
 pub enum Theme {
     Dark,
     Light,
+    Minimal,
+    HighContrast,
     Custom,
 }
 
 impl Theme {
-    pub const ALL: [Theme; 3] = [Theme::Dark, Theme::Light, Theme::Custom];
+    pub const ALL: [Theme; 5] = [
+        Theme::Dark,
+        Theme::Light,
+        Theme::Minimal,
+        Theme::HighContrast,
+        Theme::Custom,
+    ];
 
     pub fn label(self) -> &'static str {
         match self {
             Theme::Dark => "Dark",
             Theme::Light => "Light",
+            Theme::Minimal => "Minimal",
+            Theme::HighContrast => "High Contrast",
             Theme::Custom => "Custom",
         }
     }
@@ -66,11 +76,11 @@ impl OverlayPosition {
 }
 
 fn default_overlay_x() -> f32 {
-    500.0
+    40.0
 }
 
 fn default_overlay_y() -> f32 {
-    500.0
+    940.0
 }
 
 // ── Overlay Layout ───────────────────────────────────────────────────────
@@ -136,6 +146,8 @@ pub struct AppConfig {
     pub custom_mouse_fg: Color,
     pub custom_scroll_bg: Color,
     pub custom_scroll_fg: Color,
+    pub custom_tray_bg: Color,
+    pub custom_tray_border: Color,
 
     // ── State ──
     pub overlay_enabled: bool,
@@ -181,6 +193,8 @@ impl Default for AppConfig {
             custom_mouse_fg: Color::rgb(255, 255, 255),
             custom_scroll_bg: Color::rgb(80, 170, 120),
             custom_scroll_fg: Color::rgb(255, 255, 255),
+            custom_tray_bg: Color::rgba(255, 255, 255, 230),
+            custom_tray_border: Color::rgba(200, 200, 210, 0),
 
             overlay_enabled: true,
 
@@ -192,14 +206,14 @@ impl Default for AppConfig {
             show_mouse_icon: true,
             show_scroll: true,
 
-            position: OverlayPosition::TopRight,
-            layout: OverlayLayout::Vertical,
+            position: OverlayPosition::Manual,
+            layout: OverlayLayout::Horizontal,
             margin_x: 40.0,
             margin_y: 60.0,
             overlay_width: 280.0,
             overlay_height: 200.0,
-            overlay_x: 500.0,
-            overlay_y: 500.0,
+            overlay_x: 40.0,
+            overlay_y: 940.0,
         }
     }
 }
