@@ -160,6 +160,7 @@ pub struct AppConfig {
     pub show_mouse_clicks: bool,
     pub show_mouse_icon: bool,
     pub show_scroll: bool,
+    pub positioning_mode: bool,
 
     // ── Position & Layout ──
     pub position: OverlayPosition,
@@ -205,6 +206,7 @@ impl Default for AppConfig {
             show_mouse_clicks: true,
             show_mouse_icon: true,
             show_scroll: true,
+            positioning_mode: false,
 
             position: OverlayPosition::Manual,
             layout: OverlayLayout::Horizontal,
