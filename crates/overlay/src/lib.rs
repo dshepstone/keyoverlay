@@ -3,65 +3,162 @@ mod overlay_window;
 mod settings_window;
 mod theme;
 
-use std::collections::VecDeque;
+use std::collections::HashSet;
 use std::sync::mpsc::Receiver;
-use std::time::Instant;
+use std::time::{Duration, Instant};
 
 use anyhow::Result;
 use eframe::egui;
+use eframe::epaint::Rgba;
 use keyoverlay_core::{AppConfig, OverlayPosition, SharedConfig};
-use keyoverlay_input::{InputEvent, MouseButton};
+use keyoverlay_input::{InputEvent, Key, MouseButton};
 
 use mouse_icon::{draw_mouse_icon, MouseHighlight};
-use overlay_window::{draw_event_pill, DisplayEvent, EventKind};
+use overlay_window::{draw_chord_pill, draw_event_pill};
 use theme::Palette;
 
 const OVERLAY_VIEWPORT_TITLE: &str = "KeyOverlayOverlay";
+const OVERLAY_IDLE_HIDE_MS: u64 = 700;
+const MOUSE_ICON_IDLE_HIDE_MS: u64 = 450;
+const OVERLAY_PADDING: f32 = 14.0;
+const LARGE_KEY_FONT_BOOST: f32 = 14.0;
 
-// On Windows the overlay transparency is handled entirely by eframe's
-// `.with_transparent(true)` and `.with_mouse_passthrough(true)`.
-// Previous attempts to manually apply WS_EX_LAYERED + WS_EX_TRANSPARENT
-// via Win32 APIs conflicted with eframe's own compositing and caused the
-// window to be invisible on the desktop (only visible in the taskbar
-// preview).  We intentionally leave this as a no-op now.
 fn ensure_windows_overlay_transparency() {}
 
-// ── Combined App ────────────────────────────────────────────────────────
-// Single eframe application: settings is the main window, overlay is a
-// child viewport shown/hidden via the on/off toggle.
+#[derive(Clone)]
+struct InputState {
+    pressed_keys: HashSet<Key>,
+    pressed_mouse_buttons: HashSet<MouseButton>,
+    last_any_activity: Instant,
+    last_mouse_activity: Instant,
+    last_mouse_event_label: Option<String>,
+}
+
+impl InputState {
+    fn new() -> Self {
+        let now = Instant::now();
+        Self {
+            pressed_keys: HashSet::new(),
+            pressed_mouse_buttons: HashSet::new(),
+            last_any_activity: now,
+            last_mouse_activity: now,
+            last_mouse_event_label: None,
+        }
+    }
+
+    fn apply_event(&mut self, event: InputEvent) {
+        let now = event.timestamp();
+        match event {
+            InputEvent::KeyDown(e) => {
+                self.pressed_keys.insert(e.key);
+                self.last_any_activity = now;
+            }
+            InputEvent::KeyUp(e) => {
+                self.pressed_keys.remove(&e.key);
+                self.last_any_activity = now;
+            }
+            InputEvent::MouseDown(e) => {
+                self.pressed_mouse_buttons.insert(e.button);
+                self.last_any_activity = now;
+                self.last_mouse_activity = now;
+                self.last_mouse_event_label = Some(format!("{}", e.button));
+            }
+            InputEvent::MouseUp(e) => {
+                self.pressed_mouse_buttons.remove(&e.button);
+                self.last_any_activity = now;
+                self.last_mouse_activity = now;
+            }
+            InputEvent::MouseWheel(e) => {
+                self.last_any_activity = now;
+                self.last_mouse_activity = now;
+                self.last_mouse_event_label = Some(format!("{}", e.direction));
+            }
+            InputEvent::MouseMove(_) => {
+                self.last_any_activity = now;
+                self.last_mouse_activity = now;
+            }
+        }
+    }
+
+    fn overlay_visible(&self, now: Instant) -> bool {
+        if !self.pressed_keys.is_empty() || !self.pressed_mouse_buttons.is_empty() {
+            return true;
+        }
+        now.duration_since(self.last_any_activity) < Duration::from_millis(OVERLAY_IDLE_HIDE_MS)
+    }
+
+    fn mouse_visible(&self, now: Instant) -> bool {
+        if !self.pressed_mouse_buttons.is_empty() {
+            return true;
+        }
+        now.duration_since(self.last_mouse_activity)
+            < Duration::from_millis(MOUSE_ICON_IDLE_HIDE_MS)
+    }
+
+    fn mouse_event_visible(&self, now: Instant) -> bool {
+        self.last_mouse_event_label.is_some() && self.mouse_visible(now)
+    }
+
+    fn current_chord(&self) -> Option<String> {
+        if self.pressed_keys.is_empty() {
+            return None;
+        }
+
+        let mut keys: Vec<Key> = self.pressed_keys.iter().copied().collect();
+        keys.sort_by_key(|k| key_sort_rank(*k));
+
+        Some(
+            keys.into_iter()
+                .map(|k| k.to_string())
+                .collect::<Vec<_>>()
+                .join(" + "),
+        )
+    }
+}
+
+fn key_sort_rank(key: Key) -> (u8, String) {
+    let modifier_rank = match key {
+        Key::Ctrl => 0,
+        Key::Shift => 1,
+        Key::Alt => 2,
+        Key::Win => 3,
+        _ => 10,
+    };
+    (modifier_rank, key.to_string())
+}
 
 struct App {
-    // Settings state.
     config: SharedConfig,
     draft: AppConfig,
     active_tab: settings_window::SettingsTab,
     status_msg: Option<(String, Instant)>,
-
-    // Overlay state.
     rx: Receiver<InputEvent>,
-    events: VecDeque<DisplayEvent>,
-    last_mouse_btn: Option<(MouseButton, Instant)>,
-
-    /// Detected screen size (updated each frame from the main window context).
+    input_state: InputState,
     screen_size: [f32; 2],
 }
 
 impl App {
     fn new(rx: Receiver<InputEvent>, config: SharedConfig) -> Self {
-        let draft = config.lock().unwrap().clone();
+        let mut draft = config.lock().unwrap().clone();
+        if draft.font_size < 26.0 {
+            draft.font_size = 26.0;
+        }
+
         Self {
             config,
             draft,
             active_tab: settings_window::SettingsTab::Appearance,
             status_msg: None,
             rx,
-            events: VecDeque::with_capacity(16),
-            last_mouse_btn: None,
+            input_state: InputState::new(),
             screen_size: [1920.0, 1080.0],
         }
     }
 
     fn apply(&mut self) {
+        if self.draft.font_size < 26.0 {
+            self.draft.font_size = 26.0;
+        }
         *self.config.lock().unwrap() = self.draft.clone();
         self.draft.save();
         self.status_msg = Some(("Settings saved.".into(), Instant::now()));
@@ -69,70 +166,10 @@ impl App {
 
     fn reset_defaults(&mut self) {
         self.draft = AppConfig::default();
+        self.draft.font_size = 26.0;
         self.apply();
     }
 
-    fn push_event(&mut self, event: InputEvent) {
-        let cfg = &self.draft;
-
-        match &event {
-            InputEvent::Key(_) if !cfg.show_keyboard => return,
-            InputEvent::MouseClick(_) if !cfg.show_mouse_clicks => return,
-            InputEvent::Scroll(_) if !cfg.show_scroll => return,
-            _ => {}
-        }
-
-        if let InputEvent::MouseClick(mc) = &event {
-            self.last_mouse_btn = Some((mc.button, Instant::now()));
-        }
-
-        let (label, kind) = match &event {
-            InputEvent::Key(ke) => {
-                let has_mods = !ke.modifiers.is_empty();
-                (
-                    event.display_string(),
-                    EventKind::Key {
-                        has_modifiers: has_mods,
-                    },
-                )
-            }
-            InputEvent::MouseClick(_) => (event.display_string(), EventKind::Mouse),
-            InputEvent::Scroll(_) => (event.display_string(), EventKind::Scroll),
-        };
-
-        let max = self.draft.max_visible_events;
-        while self.events.len() >= max {
-            self.events.pop_front();
-        }
-
-        self.events.push_back(DisplayEvent {
-            label,
-            kind,
-            created: Instant::now(),
-        });
-    }
-
-    fn prune_expired(&mut self) {
-        let now = Instant::now();
-        let d = self.draft.display_duration_secs as f64;
-        let f = self.draft.fade_duration_secs as f64;
-        while self.events.front().is_some_and(|e| e.is_expired(now, d, f)) {
-            self.events.pop_front();
-        }
-    }
-
-    fn mouse_highlight(&self) -> MouseHighlight {
-        let cfg = &self.draft;
-        if let Some((btn, t)) = self.last_mouse_btn {
-            let age = Instant::now().duration_since(t).as_secs_f64();
-            if age < (cfg.display_duration_secs + cfg.fade_duration_secs) as f64 {
-                return MouseHighlight::from_button(btn);
-            }
-        }
-        MouseHighlight::None
-    }
-
-    /// Compute the overlay window position based on config and actual screen size.
     fn compute_overlay_position(&self, win_size: [f32; 2], screen: [f32; 2]) -> egui::Pos2 {
         let cfg = &self.draft;
         if cfg.position == OverlayPosition::Manual {
@@ -158,61 +195,61 @@ impl App {
         }
     }
 
-    fn mouse_alpha(&self) -> f32 {
-        let cfg = &self.draft;
-        if let Some((_btn, t)) = self.last_mouse_btn {
-            let age = Instant::now().duration_since(t).as_secs_f64();
-            let d = cfg.display_duration_secs as f64;
-            let f = cfg.fade_duration_secs as f64;
-            if age < d {
-                return 1.0;
-            } else if age < d + f {
-                return (1.0 - ((age - d) / f) as f32).max(0.0);
-            }
+    fn mouse_highlight(&self) -> MouseHighlight {
+        if self
+            .input_state
+            .pressed_mouse_buttons
+            .contains(&MouseButton::Left)
+        {
+            MouseHighlight::Left
+        } else if self
+            .input_state
+            .pressed_mouse_buttons
+            .contains(&MouseButton::Right)
+        {
+            MouseHighlight::Right
+        } else if self
+            .input_state
+            .pressed_mouse_buttons
+            .contains(&MouseButton::Middle)
+        {
+            MouseHighlight::Middle
+        } else {
+            MouseHighlight::None
         }
-        0.4
     }
 }
 
-/// Padding around the content inside the rounded overlay background.
-const OVERLAY_PADDING: f32 = 10.0;
-
 impl eframe::App for App {
     fn clear_color(&self, _visuals: &egui::Visuals) -> [f32; 4] {
-        egui::Color32::TRANSPARENT.to_normalized_gamma_f32()
+        Rgba::TRANSPARENT.to_array()
     }
 
     fn update(&mut self, ctx: &egui::Context, _frame: &mut eframe::Frame) {
-        // Always drain input events (even when overlay is off, so the
-        // channel doesn't fill up).
         while let Ok(event) = self.rx.try_recv() {
-            if self.draft.overlay_enabled {
-                self.push_event(event);
-            }
+            self.input_state.apply_event(event);
         }
-        self.prune_expired();
 
-        // Keep live config in sync (overlay reads from draft directly).
         *self.config.lock().unwrap() = self.draft.clone();
 
-        // ── Detect screen size from the main window ──
         let screen_rect = ctx.input(|i| i.screen_rect());
         if screen_rect.width() > 100.0 && screen_rect.height() > 100.0 {
             self.screen_size = [screen_rect.width(), screen_rect.height()];
         }
 
-        // ── Render settings (main window) ──
         settings_window::draw_settings(ctx, self);
 
-        // ── Render overlay (child viewport) ──
-        // Always show the overlay when enabled so the mouse icon and
-        // keystrokes are visible.
         if self.draft.overlay_enabled {
+            let now = Instant::now();
+            let overlay_visible = self.input_state.overlay_visible(now);
+            let mouse_visible = self.draft.show_mouse_icon && self.input_state.mouse_visible(now);
+            let mouse_event_visible = self.input_state.mouse_event_visible(now);
+            let chord = self.input_state.current_chord();
+            let mouse_highlight = self.mouse_highlight();
+            let mouse_event_label = self.input_state.last_mouse_event_label.clone();
+
             let cfg = self.draft.clone();
             let palette = Palette::from_config(&cfg);
-            let events: Vec<DisplayEvent> = self.events.iter().rev().cloned().collect();
-            let mouse_hl = self.mouse_highlight();
-            let mouse_a = self.mouse_alpha();
 
             let win_w = cfg.overlay_width;
             let win_h = cfg.overlay_height;
@@ -232,8 +269,6 @@ impl eframe::App for App {
                 move |ctx, _class| {
                     ensure_windows_overlay_transparency();
 
-                    // Override visuals so the viewport background is transparent;
-                    // we paint our own rounded background below.
                     let mut vis = egui::Visuals::dark();
                     vis.panel_fill = egui::Color32::TRANSPARENT;
                     vis.window_fill = egui::Color32::TRANSPARENT;
@@ -243,55 +278,60 @@ impl eframe::App for App {
                     egui::CentralPanel::default()
                         .frame(egui::Frame::none().fill(egui::Color32::TRANSPARENT))
                         .show(ctx, |ui| {
-                            let now = Instant::now();
-                            let d = cfg.display_duration_secs as f64;
-                            let f = cfg.fade_duration_secs as f64;
-                            let rounding = cfg.pill_rounding;
-                            let opacity = cfg.overlay_opacity;
-                            let panel_rect = ui.available_rect_before_wrap();
+                            if !overlay_visible {
+                                return;
+                            }
 
-                            // Draw a rounded semi-transparent background behind
-                            // all content so the overlay is always visible.
+                            let panel_rect = ui.available_rect_before_wrap();
                             let bg_alpha =
-                                (cfg.background_opacity * opacity * 255.0) as u8;
+                                (cfg.background_opacity * cfg.overlay_opacity * 255.0) as u8;
                             let bg_color =
                                 egui::Color32::from_rgba_unmultiplied(30, 30, 40, bg_alpha);
-                            ui.painter().rect_filled(
-                                panel_rect,
-                                rounding + 4.0,
-                                bg_color,
-                            );
+                            ui.painter()
+                                .rect_filled(panel_rect, cfg.pill_rounding + 6.0, bg_color);
 
-                            // Content area inside padding.
                             let content_rect = panel_rect.shrink(OVERLAY_PADDING);
                             let mut content_ui = ui.child_ui(
                                 content_rect,
-                                egui::Layout::left_to_right(egui::Align::Min),
+                                egui::Layout::left_to_right(egui::Align::Center),
                             );
 
-                            content_ui.horizontal(|ui| {
-                                if cfg.show_mouse_icon {
-                                    let a = mouse_a * opacity;
-                                    draw_mouse_icon(ui, mouse_hl, a, &palette);
-                                    ui.add_space(12.0);
+                            content_ui.horizontal_centered(|ui| {
+                                if mouse_visible {
+                                    draw_mouse_icon(
+                                        ui,
+                                        mouse_highlight,
+                                        cfg.overlay_opacity,
+                                        &palette,
+                                    );
+                                    ui.add_space(16.0);
                                 }
 
-                                ui.vertical(|ui| {
-                                    for event in &events {
-                                        let alpha = event.opacity(now, d, f) * opacity;
-                                        if alpha <= 0.0 {
-                                            continue;
-                                        }
-                                        ui.add_space(2.0);
-                                        draw_event_pill(
+                                ui.vertical_centered(|ui| {
+                                    if let Some(chord) = chord {
+                                        draw_chord_pill(
                                             ui,
-                                            event,
-                                            alpha,
+                                            &chord,
+                                            cfg.overlay_opacity,
                                             &palette,
-                                            rounding,
-                                            cfg.font_size,
+                                            cfg.pill_rounding,
+                                            cfg.font_size + LARGE_KEY_FONT_BOOST,
                                         );
-                                        ui.add_space(2.0);
+                                    }
+
+                                    if mouse_event_visible {
+                                        if let Some(label) = mouse_event_label.as_deref() {
+                                            ui.add_space(10.0);
+                                            draw_event_pill(
+                                                ui,
+                                                label,
+                                                cfg.overlay_opacity,
+                                                palette.mouse_bg,
+                                                palette.mouse_fg,
+                                                cfg.pill_rounding,
+                                                cfg.font_size + 4.0,
+                                            );
+                                        }
                                     }
                                 });
                             });
@@ -300,12 +340,9 @@ impl eframe::App for App {
             );
         }
 
-        // Repaint for animations.
-        ctx.request_repaint_after(std::time::Duration::from_millis(16));
+        ctx.request_repaint_after(Duration::from_millis(16));
     }
 }
-
-// ── Public entry point ──────────────────────────────────────────────────
 
 pub fn run(rx: Receiver<InputEvent>, config: SharedConfig) -> Result<()> {
     let options = eframe::NativeOptions {
