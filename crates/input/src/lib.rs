@@ -482,13 +482,24 @@ fn modifier_flag(key: Key) -> Option<Modifiers> {
 }
 
 /// Track currently held modifier state.
-#[derive(Default)]
 struct ModifierState {
     shift: bool,
     ctrl: bool,
     alt: bool,
     win: bool,
     used_as_modifier: Modifiers,
+}
+
+impl Default for ModifierState {
+    fn default() -> Self {
+        Self {
+            shift: false,
+            ctrl: false,
+            alt: false,
+            win: false,
+            used_as_modifier: Modifiers::empty(),
+        }
+    }
 }
 
 impl ModifierState {
