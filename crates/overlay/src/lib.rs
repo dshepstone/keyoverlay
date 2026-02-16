@@ -832,8 +832,10 @@ impl eframe::App for App {
 
             if !should_show_overlay {
                 overlay_startup_diagnostics::log_event("Hide requested (overlay not active)");
-                ctx.send_viewport_cmd_to(overlay_id, egui::ViewportCommand::Close);
-                self.last_region_geometry = None;
+                // Keep the overlay viewport alive between activations to avoid
+                // destroy/recreate startup animations. We hide it instead of
+                // closing it so the next activation reuses the same window.
+                ctx.send_viewport_cmd_to(overlay_id, egui::ViewportCommand::Visible(false));
             } else {
                 ctx.send_viewport_cmd_to(
                     overlay_id,
