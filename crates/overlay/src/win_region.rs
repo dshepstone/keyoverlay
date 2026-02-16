@@ -298,6 +298,7 @@ pub fn hwnd_is_valid(_hwnd: OverlayHwnd) -> bool {
     false
 }
 
+#[cfg(not(target_os = "windows"))]
 pub fn find_hwnd_by_title(_title: &str) -> Option<OverlayHwnd> {
     None
 }
