@@ -4,7 +4,7 @@ mod settings_window;
 mod theme;
 mod win_region;
 
-use std::collections::{HashSet, VecDeque};
+use std::collections::HashSet;
 use std::env;
 use std::sync::mpsc::Receiver;
 use std::sync::OnceLock;
@@ -47,27 +47,6 @@ struct ScrollHighlight {
     last_event: Instant,
 }
 
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-enum TokenKind {
-    Key,
-    Mouse,
-    Wheel,
-}
-
-#[derive(Clone)]
-struct HistoryToken {
-    id: u64,
-    label: String,
-    kind: TokenKind,
-    created_at: Instant,
-    expires_at: Instant,
-    fade_end_at: Instant,
-    x: f32,
-    x_target: f32,
-    alpha: f32,
-    scale: f32,
-}
-
 #[derive(Clone)]
 struct RenderToken {
     label: String,
@@ -80,9 +59,62 @@ struct RenderToken {
 }
 
 #[derive(Clone)]
+struct SingleTileState {
+    label: String,
+    is_down: bool,
+    down_until: Option<Instant>,
+    last_event_at: Instant,
+    anim_down: f32,
+    visible_alpha: f32,
+}
+
+impl SingleTileState {
+    fn new(now: Instant) -> Self {
+        Self {
+            label: String::new(),
+            is_down: false,
+            down_until: None,
+            last_event_at: now,
+            anim_down: 0.0,
+            visible_alpha: 0.0,
+        }
+    }
+
+    fn register_press(&mut self, label: String, now: Instant, hold_ms: u64) {
+        self.label = label;
+        self.is_down = true;
+        self.down_until = Some(now + Duration::from_millis(hold_ms));
+        self.last_event_at = now;
+        self.visible_alpha = 1.0;
+    }
+
+    fn tick(&mut self, now: Instant, dt: f32, idle_ms: u64) {
+        if self.is_down && self.down_until.is_some_and(|until| now >= until) {
+            self.is_down = false;
+            self.down_until = None;
+        }
+
+        let down_target = if self.is_down { 1.0 } else { 0.0 };
+        let down_factor = 1.0 - (-38.0 * dt.max(0.0)).exp();
+        self.anim_down += (down_target - self.anim_down) * down_factor;
+
+        let alpha_target = if !self.label.is_empty()
+            && now.duration_since(self.last_event_at) <= Duration::from_millis(idle_ms)
+        {
+            1.0
+        } else {
+            0.0
+        };
+        let alpha_factor = 1.0 - (-12.0 * dt.max(0.0)).exp();
+        self.visible_alpha += (alpha_target - self.visible_alpha) * alpha_factor;
+    }
+}
+
+#[derive(Clone)]
 struct OverlayTrayState {
-    items: VecDeque<HistoryToken>,
-    next_id: u64,
+    key_tile: SingleTileState,
+    mouse_tile: SingleTileState,
+    mouse_highlight: MouseHighlight,
     pill_w: f32,
     pill_w_target: f32,
     tray_alpha: f32,
@@ -91,9 +123,11 @@ struct OverlayTrayState {
 
 impl OverlayTrayState {
     fn new() -> Self {
+        let now = Instant::now();
         Self {
-            items: VecDeque::new(),
-            next_id: 1,
+            key_tile: SingleTileState::new(now),
+            mouse_tile: SingleTileState::new(now),
+            mouse_highlight: MouseHighlight::None,
             pill_w: 0.0,
             pill_w_target: 0.0,
             tray_alpha: 0.0,
@@ -389,9 +423,9 @@ fn mouse_debug_enabled() -> bool {
     *ENABLED.get_or_init(|| env::var("MOUSE_DEBUG").is_ok_and(|v| v == "1"))
 }
 
-fn history_debug_enabled() -> bool {
+fn single_tile_debug_enabled() -> bool {
     static ENABLED: OnceLock<bool> = OnceLock::new();
-    *ENABLED.get_or_init(|| env::var("OVERLAY_HISTORY_DEBUG").is_ok_and(|v| v == "1"))
+    *ENABLED.get_or_init(|| env::var("OVERLAY_SINGLE_TILE_DEBUG").is_ok_and(|v| v == "1"))
 }
 
 fn ease_out_cubic(t: f32) -> f32 {
@@ -561,47 +595,15 @@ impl App {
         galley.size()
     }
 
-    fn enqueue_history_token(&mut self, label: String, kind: TokenKind, now: Instant) {
-        const VISIBLE_MS: u64 = 1_250;
-        const FADE_MS: u64 = 200;
-        const MAX_TOKENS: usize = 10;
-
-        if self.tray_state.items.len() >= MAX_TOKENS {
-            if let Some(oldest) = self.tray_state.items.front_mut() {
-                oldest.expires_at = now;
-                oldest.fade_end_at = now + Duration::from_millis(FADE_MS);
-            }
-        }
-
-        let id = self.tray_state.next_id;
-        self.tray_state.next_id = self.tray_state.next_id.saturating_add(1);
-        self.tray_state.items.push_back(HistoryToken {
-            id,
-            label: label.clone(),
-            kind,
-            created_at: now,
-            expires_at: now + Duration::from_millis(VISIBLE_MS),
-            fade_end_at: now + Duration::from_millis(VISIBLE_MS + FADE_MS),
-            x: 0.0,
-            x_target: 0.0,
-            alpha: 0.0,
-            scale: 0.92,
-        });
-
-        if history_debug_enabled() {
-            eprintln!(
-                "[overlay-history] enqueue id={} kind={kind:?} label={label} len={}",
-                id,
-                self.tray_state.items.len()
-            );
-        }
-    }
-
     fn tray_on_event(&mut self, event: &InputEvent, now: Instant) {
         match event {
             InputEvent::Key(e) => {
-                for part in e.display_string().split(" + ") {
-                    self.enqueue_history_token(part.to_lowercase(), TokenKind::Key, now);
+                let label = e.key.to_string();
+                self.tray_state
+                    .key_tile
+                    .register_press(label.clone(), now, 120);
+                if single_tile_debug_enabled() {
+                    eprintln!("[overlay-single] KeyDown label={label}");
                 }
             }
             InputEvent::MouseClick(e) => {
@@ -609,66 +611,79 @@ impl App {
                     MouseButton::Left => "LMB",
                     MouseButton::Right => "RMB",
                     MouseButton::Middle => "MMB",
-                };
-                self.enqueue_history_token(label.to_string(), TokenKind::Mouse, now);
+                }
+                .to_string();
+                self.tray_state
+                    .mouse_tile
+                    .register_press(label.clone(), now, 110);
+                self.tray_state.mouse_highlight = MouseHighlight::from_button(e.button);
+                if single_tile_debug_enabled() {
+                    eprintln!("[overlay-single] MouseDown label={label}");
+                }
             }
             InputEvent::Scroll(e) => {
                 let label = match e.direction {
-                    ScrollDirection::Up => "▲",
-                    ScrollDirection::Down => "▼",
-                };
-                self.enqueue_history_token(label.to_string(), TokenKind::Wheel, now);
+                    ScrollDirection::Up => "Wheel↑",
+                    ScrollDirection::Down => "Wheel↓",
+                }
+                .to_string();
+                self.tray_state
+                    .mouse_tile
+                    .register_press(label.clone(), now, 110);
+                self.tray_state.mouse_highlight = MouseHighlight::None;
+                if single_tile_debug_enabled() {
+                    eprintln!("[overlay-single] MouseWheel label={label}");
+                }
             }
         }
     }
 
-    fn build_render_tokens(&mut self, now: Instant) -> Vec<RenderToken> {
-        const ENTER_MS: u64 = 140;
-        const EXIT_MS: u64 = 160;
+    fn build_render_tokens(&mut self, now: Instant, dt: f32) -> Vec<RenderToken> {
+        const IDLE_FADE_MS: u64 = 450;
 
-        self.tray_state
-            .items
-            .retain(|token| now < token.fade_end_at);
+        self.tray_state.key_tile.tick(now, dt, IDLE_FADE_MS);
+        self.tray_state.mouse_tile.tick(now, dt, IDLE_FADE_MS);
 
-        self.tray_state
-            .items
-            .iter_mut()
-            .map(|token| {
-                let mut alpha = 1.0;
-                let mut scale = 1.0;
-                let age_ms = now.duration_since(token.created_at).as_millis() as f32;
-                if age_ms < ENTER_MS as f32 {
-                    let e = ease_out_cubic(age_ms / ENTER_MS as f32);
-                    alpha = e;
-                    scale = 0.92 + 0.08 * e;
-                }
+        if self.tray_state.mouse_tile.visible_alpha < 0.01 {
+            self.tray_state.mouse_highlight = MouseHighlight::None;
+        }
 
-                if now >= token.expires_at {
-                    let fade_t = (now.duration_since(token.expires_at).as_secs_f32() * 1000.0)
-                        / EXIT_MS as f32;
-                    let e = ease_in_cubic(fade_t);
-                    alpha = 1.0 - e;
-                    scale = 1.0 - 0.04 * e;
-                }
+        let mut tokens = Vec::with_capacity(2);
 
-                token.alpha = alpha.clamp(0.0, 1.0);
-                token.scale = scale;
+        if self.draft.show_mouse_icon && self.tray_state.mouse_tile.visible_alpha > 0.01 {
+            tokens.push(RenderToken {
+                label: self.tray_state.mouse_tile.label.clone(),
+                is_mouse: true,
+                mouse_highlight: self.tray_state.mouse_highlight,
+                alpha: self.tray_state.mouse_tile.visible_alpha.clamp(0.0, 1.0),
+                scale: 1.0 - (self.tray_state.mouse_tile.anim_down * 0.015),
+                pulse: 0.0,
+                font_size: self.draft.font_size + 4.0,
+            });
+        }
 
-                RenderToken {
-                    label: token.label.clone(),
-                    is_mouse: token.kind == TokenKind::Mouse,
-                    mouse_highlight: MouseHighlight::None,
-                    alpha: token.alpha,
-                    scale: token.scale,
-                    pulse: 0.0,
-                    font_size: if token.kind == TokenKind::Mouse {
-                        self.draft.font_size + 4.0
-                    } else {
-                        self.draft.font_size + LARGE_KEY_FONT_BOOST
-                    },
-                }
-            })
-            .collect()
+        if self.tray_state.key_tile.visible_alpha > 0.01 {
+            tokens.push(RenderToken {
+                label: self.tray_state.key_tile.label.clone(),
+                is_mouse: false,
+                mouse_highlight: MouseHighlight::None,
+                alpha: self.tray_state.key_tile.visible_alpha.clamp(0.0, 1.0),
+                scale: 1.0 - (self.tray_state.key_tile.anim_down * 0.015),
+                pulse: 0.0,
+                font_size: self.draft.font_size + LARGE_KEY_FONT_BOOST,
+            });
+        }
+
+        if single_tile_debug_enabled() {
+            eprintln!(
+                "[overlay-single] tokens={} key_down={:.2} mouse_down={:.2}",
+                tokens.len(),
+                self.tray_state.key_tile.anim_down,
+                self.tray_state.mouse_tile.anim_down
+            );
+        }
+
+        tokens
     }
 
     fn build_overlay_geometry(
@@ -709,33 +724,15 @@ impl App {
             token_heights.push(pill_h);
         }
 
-        // Left-to-right anchored layout; items slide to fill gaps.
-        let mut cursor_x = 0.0f32;
-        let item_count = self.tray_state.items.len();
-        for (idx, item) in self.tray_state.items.iter_mut().enumerate() {
-            let target = cursor_x;
-            item.x_target = target;
-            let k = 22.0;
-            let factor = 1.0 - (-k * dt.max(0.0)).exp();
-            item.x += (item.x_target - item.x) * factor;
-
-            cursor_x += token_widths.get(idx).copied().unwrap_or(0) as f32;
-            if idx + 1 < item_count {
-                cursor_x += scaled_px(GAP_BETWEEN_PILLS) as f32;
-            }
-        }
+        // Left-to-right anchored layout with fixed origin.
+        let mut cursor_x = 0i32;
 
         for (idx, token) in tokens.iter().enumerate() {
             let label = token.label.clone();
             let font_points = token.font_size * overlay_scale;
             let pill_w = token_widths[idx];
             let pill_h = token_heights[idx];
-            let item_x = self
-                .tray_state
-                .items
-                .get(idx)
-                .map(|i| i.x.round() as i32)
-                .unwrap_or(0);
+            let item_x = cursor_x;
 
             pill_rects.push(PillRect {
                 x: item_x,
@@ -753,6 +750,10 @@ impl App {
             pill_mouse_highlights.push(token.mouse_highlight);
 
             content_h_px = content_h_px.max(pill_h);
+            cursor_x += pill_w;
+            if idx + 1 < tokens.len() {
+                cursor_x += scaled_px(GAP_BETWEEN_PILLS);
+            }
         }
 
         if pill_rects.is_empty() {
@@ -795,10 +796,10 @@ impl App {
         self.tray_state.pill_w += (self.tray_state.pill_w_target - self.tray_state.pill_w) * factor;
         self.tray_state.tray_alpha += (1.0 - self.tray_state.tray_alpha) * factor;
 
-        if history_debug_enabled() {
+        if single_tile_debug_enabled() {
             let labels: Vec<&str> = tokens.iter().map(|t| t.label.as_str()).collect();
             eprintln!(
-                "[overlay-history] tokens={labels:?} row_w={} pill_target={:.1} pill_cur={:.1}",
+                "[overlay-single] tokens={labels:?} row_w={} pill_target={:.1} pill_cur={:.1}",
                 tray_w_raw, self.tray_state.pill_w_target, self.tray_state.pill_w,
             );
         }
@@ -1016,15 +1017,15 @@ impl eframe::App for App {
             let fade_duration = Duration::from_secs_f32(self.draft.fade_duration_secs.max(0.0));
             self.input_state.tick(now, mouse_hold_for, overlay_hold_for);
 
+            let render_tokens = self.build_render_tokens(now, dt);
             let mut overlay_visible =
-                !self.tray_state.items.is_empty() || self.tray_state.tray_alpha > 0.01;
+                !render_tokens.is_empty() || self.tray_state.tray_alpha > 0.01;
             if self.manual_preview_until.is_some_and(|until| now <= until)
                 && self.active_tab == settings_window::SettingsTab::Position
                 && self.draft.position == OverlayPosition::Manual
             {
                 overlay_visible = true;
             }
-            let render_tokens = self.build_render_tokens(now);
             let scroll_arrow = self.input_state.scroll_arrow_for_display(
                 now,
                 display_duration,
@@ -1116,7 +1117,7 @@ impl eframe::App for App {
                         egui::ViewportCommand::InnerSize(requested_inner),
                     );
                     self.last_sent_inner_size = Some(requested_inner);
-                    if history_debug_enabled() {
+                    if single_tile_debug_enabled() {
                         eprintln!(
                             "[overlay-tray] resize inner=({:.1},{:.1})",
                             requested_inner.x, requested_inner.y
@@ -1129,7 +1130,7 @@ impl eframe::App for App {
                         egui::ViewportCommand::OuterPosition(win_pos),
                     );
                     self.last_sent_outer_pos = Some(win_pos);
-                    if history_debug_enabled() {
+                    if single_tile_debug_enabled() {
                         eprintln!(
                             "[overlay-tray] move x={:.1} y={:.1} w={:.1} h={:.1}",
                             win_pos.x, win_pos.y, requested_inner.x, requested_inner.y
@@ -1227,13 +1228,13 @@ impl eframe::App for App {
                         let palette = theme::Palette::from_config(&cfg);
 
                         let mut vis = egui::Visuals::light();
-                        vis.panel_fill = egui::Color32::WHITE;
-                        vis.window_fill = egui::Color32::WHITE;
-                        vis.extreme_bg_color = egui::Color32::WHITE;
+                        vis.panel_fill = egui::Color32::TRANSPARENT;
+                        vis.window_fill = egui::Color32::TRANSPARENT;
+                        vis.extreme_bg_color = egui::Color32::TRANSPARENT;
                         ctx.set_visuals(vis);
 
                         egui::CentralPanel::default()
-                            .frame(egui::Frame::none().fill(egui::Color32::WHITE))
+                            .frame(egui::Frame::none().fill(egui::Color32::TRANSPARENT))
                             .show(ctx, |ui| {
                                 let panel_rect = ui.available_rect_before_wrap();
                                 let tray_rounding = egui::Rounding::same(
