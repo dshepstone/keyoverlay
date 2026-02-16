@@ -80,10 +80,15 @@ impl SingleTileState {
         }
     }
 
-    fn register_press(&mut self, label: String, now: Instant, hold_ms: u64) {
+    fn register_press(
+        &mut self,
+        label: String,
+        now: Instant,
+        auto_release_after: Option<Duration>,
+    ) {
         self.label = label;
         self.is_down = true;
-        self.down_until = Some(now + Duration::from_millis(hold_ms));
+        self.down_until = auto_release_after.map(|d| now + d);
         self.last_event_at = now;
         self.visible_alpha = 1.0;
     }
@@ -615,7 +620,7 @@ impl App {
                 if e.is_down {
                     self.tray_state
                         .key_tile
-                        .register_press(label.clone(), now, 400);
+                        .register_press(label.clone(), now, None);
                     if single_tile_debug_enabled() {
                         eprintln!("[overlay-single] KeyDown label={label}");
                     }
@@ -636,7 +641,7 @@ impl App {
                 if e.is_down {
                     self.tray_state
                         .mouse_tile
-                        .register_press(label.clone(), now, 800);
+                        .register_press(label.clone(), now, None);
                     self.tray_state.mouse_highlight = MouseHighlight::from_button(e.button);
                     if single_tile_debug_enabled() {
                         eprintln!("[overlay-single] MouseDown label={label}");
@@ -655,9 +660,11 @@ impl App {
                     ScrollDirection::Down => "Wheel↓",
                 }
                 .to_string();
-                self.tray_state
-                    .mouse_tile
-                    .register_press(label.clone(), now, 140);
+                self.tray_state.mouse_tile.register_press(
+                    label.clone(),
+                    now,
+                    Some(Duration::from_millis(140)),
+                );
                 self.tray_state.mouse_highlight = MouseHighlight::None;
                 if single_tile_debug_enabled() {
                     eprintln!("[overlay-single] MouseWheel label={label}");
