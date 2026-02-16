@@ -711,6 +711,7 @@ impl App {
 
         // Left-to-right anchored layout; items slide to fill gaps.
         let mut cursor_x = 0.0f32;
+        let item_count = self.tray_state.items.len();
         for (idx, item) in self.tray_state.items.iter_mut().enumerate() {
             let target = cursor_x;
             item.x_target = target;
@@ -719,7 +720,7 @@ impl App {
             item.x += (item.x_target - item.x) * factor;
 
             cursor_x += token_widths.get(idx).copied().unwrap_or(0) as f32;
-            if idx + 1 < self.tray_state.items.len() {
+            if idx + 1 < item_count {
                 cursor_x += scaled_px(GAP_BETWEEN_PILLS) as f32;
             }
         }
@@ -1013,10 +1014,6 @@ impl eframe::App for App {
             let display_duration =
                 Duration::from_secs_f32(self.draft.display_duration_secs.max(0.0));
             let fade_duration = Duration::from_secs_f32(self.draft.fade_duration_secs.max(0.0));
-            let mouse_events_enabled = self.draft.show_mouse_clicks
-                || self.draft.show_scroll
-                || self.draft.show_mouse_icon;
-
             self.input_state.tick(now, mouse_hold_for, overlay_hold_for);
 
             let mut overlay_visible =
