@@ -97,3 +97,22 @@ Legacy aliases are still accepted (`A..G`, old debug env names) for compatibilit
 ## Notes on evidence quality
 
 This report includes expected sample logs because this environment cannot run native Windows GUI behavior. The code now emits the required HWND snapshots and lifecycle markers to capture real evidence on Windows machines.
+
+## Stability Findings
+
+- **Window recreation observed?**
+  - Added explicit `RECREATED hwnd old=... new=...` logging when discovered HWND changes between snapshots.
+  - On detection, code now rebinds immediately, resets preparation state, and performs a hidden re-prepare before showing.
+
+- **Moved/resized after show observed?**
+  - Added stateful throttling so `InnerSize`/`OuterPosition` commands are sent only when values actually change.
+  - This reduces post-show command churn that can look like slide/jump.
+
+- **Rapid visibility toggles observed?**
+  - Startup now defaults to hide-until-ready.
+  - Overlay remains hidden through initial sizing/positioning/region work, then performs one “first stable show” and one redraw.
+
+- **What was fixed to reduce flicker/slide**
+  - Stable first-show gate (`first_show_done`) prevents user-visible intermediate states.
+  - HWND rebinding path handles unavoidable recreation without showing transient windows.
+  - Region scheduler + redraw coalescing prevents repeated `SetWindowRgn` redraw bursts during layout settle.

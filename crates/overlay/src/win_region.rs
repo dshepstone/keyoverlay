@@ -29,6 +29,7 @@ mod imp {
         CreateRoundRectRgn, DeleteObject, InvalidateRect, RedrawWindow, SetWindowRgn,
         RDW_ALLCHILDREN, RDW_ERASE, RDW_FRAME, RDW_INVALIDATE, RDW_UPDATENOW,
     };
+    use windows::Win32::UI::HiDpi::GetDpiForWindow;
     use windows::Win32::UI::WindowsAndMessaging::{
         FindWindowW, GetClassNameW, GetClientRect, GetWindowLongPtrW, GetWindowRect,
         GetWindowTextW, GetWindowThreadProcessId, IsWindowVisible, GWL_EXSTYLE, GWL_STYLE,
@@ -152,12 +153,15 @@ mod imp {
         let style = unsafe { GetWindowLongPtrW(hwnd, GWL_STYLE) } as usize;
         let exstyle = unsafe { GetWindowLongPtrW(hwnd, GWL_EXSTYLE) } as usize;
         let visible = unsafe { IsWindowVisible(hwnd).as_bool() };
+        let mut pid = 0u32;
+        let _ = unsafe { GetWindowThreadProcessId(hwnd, Some(&mut pid)) };
+        let dpi = unsafe { GetDpiForWindow(hwnd) };
         let layered = exstyle & 0x0008_0000 != 0; // WS_EX_LAYERED
         let transparent = exstyle & 0x0000_0020 != 0; // WS_EX_TRANSPARENT
         let topmost = exstyle & 0x0000_0008 != 0; // WS_EX_TOPMOST
 
         overlay_startup_diagnostics::log_event(format!(
-            "win_state[{label}] hwnd={hwnd:?} visible={visible} style=0x{style:08X} exstyle=0x{exstyle:08X} layered={layered} transparent={transparent} topmost={topmost} \
+            "win_state[{label}] hwnd={hwnd:?} pid={pid} visible={visible} dpi={dpi} style=0x{style:08X} exstyle=0x{exstyle:08X} layered={layered} transparent={transparent} topmost={topmost} \
              window_rect=({},{}-{},{}), client_rect=({},{}-{},{}), frame_bounds=({},{}-{}, {})",
             wr.left,
             wr.top,

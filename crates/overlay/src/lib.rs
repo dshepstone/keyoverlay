@@ -367,10 +367,13 @@ struct App {
     viewport_config_logged: bool,
     last_overlay_visible: bool,
     fixed_experiment_pos: Option<egui::Pos2>,
+    first_show_done: bool,
     pending_region: Option<(i32, i32, i32)>,
     region_settle_deadline: Option<Instant>,
     region_redraw_needed: bool,
     region_debounce: Duration,
+    last_sent_outer_pos: Option<egui::Pos2>,
+    last_sent_inner_size: Option<egui::Vec2>,
 }
 
 impl App {
@@ -411,10 +414,13 @@ impl App {
             viewport_config_logged: false,
             last_overlay_visible: false,
             fixed_experiment_pos: None,
+            first_show_done: false,
             pending_region: None,
             region_settle_deadline: None,
             region_redraw_needed: false,
             region_debounce: Duration::from_millis(120),
+            last_sent_outer_pos: None,
+            last_sent_inner_size: None,
         }
     }
 
@@ -687,8 +693,24 @@ impl App {
     }
 
     fn maybe_log_hwnd_state(&mut self) {
-        if self.last_hwnd.is_none() {
-            self.last_hwnd = find_hwnd_by_title(&overlay_viewport_title());
+        let observed = find_hwnd_by_title(&overlay_viewport_title());
+        if let (Some(old), Some(new)) = (self.last_hwnd, observed) {
+            if old != new {
+                overlay_startup_diagnostics::log_event(format!(
+                    "RECREATED hwnd old={old:?} new={new:?}; rebinding and re-preparing"
+                ));
+                snapshot_hwnd_state(old, "recreated-old");
+                snapshot_hwnd_state(new, "recreated-new");
+                self.transitions_disabled = false;
+                self.startup_region_prepared = false;
+                self.pending_region = None;
+                self.region_settle_deadline = None;
+                self.region_redraw_needed = false;
+                self.first_show_done = false;
+            }
+        }
+        if observed.is_some() {
+            self.last_hwnd = observed;
         }
 
         if let Some(hwnd) = self.last_hwnd {
@@ -824,8 +846,9 @@ impl eframe::App for App {
             };
             let overlay_id = egui::ViewportId::from_hash_of("overlay");
             let overlay_title = overlay_viewport_title();
-            let startup_hidden_mode = self.startup_experiment
-                == overlay_startup_diagnostics::OverlayExperiment::HiddenUntilReady;
+            // Default to hide-until-ready on first activation to avoid user-visible
+            // intermediate geometry/style/region transitions.
+            let startup_hidden_mode = true;
             let should_show_overlay = overlay_visible;
 
             if self.startup_experiment
@@ -844,7 +867,7 @@ impl eframe::App for App {
             }
 
             let overlay_visible = if startup_hidden_mode {
-                should_show_overlay && self.startup_region_prepared
+                should_show_overlay && self.startup_region_prepared && self.first_show_done
             } else {
                 should_show_overlay
             };
@@ -863,15 +886,23 @@ impl eframe::App for App {
                 // destroy/recreate startup animations. We hide it instead of
                 // closing it so the next activation reuses the same window.
                 ctx.send_viewport_cmd_to(overlay_id, egui::ViewportCommand::Visible(false));
+                self.first_show_done = false;
             } else {
-                ctx.send_viewport_cmd_to(
-                    overlay_id,
-                    egui::ViewportCommand::InnerSize(egui::vec2(
-                        geometry.width_points,
-                        geometry.height_points,
-                    )),
-                );
-                ctx.send_viewport_cmd_to(overlay_id, egui::ViewportCommand::OuterPosition(win_pos));
+                let requested_inner = egui::vec2(geometry.width_points, geometry.height_points);
+                if self.last_sent_inner_size != Some(requested_inner) {
+                    ctx.send_viewport_cmd_to(
+                        overlay_id,
+                        egui::ViewportCommand::InnerSize(requested_inner),
+                    );
+                    self.last_sent_inner_size = Some(requested_inner);
+                }
+                if self.last_sent_outer_pos != Some(win_pos) {
+                    ctx.send_viewport_cmd_to(
+                        overlay_id,
+                        egui::ViewportCommand::OuterPosition(win_pos),
+                    );
+                    self.last_sent_outer_pos = Some(win_pos);
+                }
                 overlay_startup_diagnostics::log_event(format!(
                     "startup geometry size_pt={:.1}x{:.1} size_px={}x{} pos=({:.1},{:.1})",
                     geometry.width_points,
@@ -884,6 +915,20 @@ impl eframe::App for App {
                 // Resize/reposition first, then apply region in window-local coordinates.
                 self.maybe_apply_window_region(&overlay_title, &geometry, overlay_visible);
 
+                if startup_hidden_mode && self.startup_region_prepared && !self.first_show_done {
+                    if let Some(hwnd) = self.last_hwnd {
+                        snapshot_hwnd_state(hwnd, "before-first-show");
+                    }
+                    overlay_startup_diagnostics::log_event("Show requested (first stable show)");
+                    ctx.send_viewport_cmd_to(overlay_id, egui::ViewportCommand::Visible(true));
+                    self.first_show_done = true;
+                    if let Some(hwnd) = self.last_hwnd {
+                        snapshot_hwnd_state(hwnd, "after-first-show");
+                        force_redraw(hwnd);
+                        snapshot_hwnd_state(hwnd, "after-first-redraw");
+                    }
+                }
+
                 if self.startup_experiment
                     == overlay_startup_diagnostics::OverlayExperiment::HiddenUntilReady
                     && !self.startup_region_prepared
@@ -893,7 +938,7 @@ impl eframe::App for App {
                     );
                     overlay_startup_diagnostics::log_event("Hide requested (hidden_until_ready)");
                     ctx.send_viewport_cmd_to(overlay_id, egui::ViewportCommand::Visible(false));
-                } else {
+                } else if self.first_show_done {
                     overlay_startup_diagnostics::log_event("Show requested");
                     ctx.send_viewport_cmd_to(
                         overlay_id,
