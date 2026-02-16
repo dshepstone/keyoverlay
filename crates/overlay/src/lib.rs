@@ -18,8 +18,8 @@ use keyoverlay_input::{InputEvent, Key, Modifiers, MouseButton, ScrollDirection}
 use mouse_icon::{draw_mouse_icon, MouseHighlight, ScrollArrowDirection};
 
 use win_region::{
-    apply_test_region, apply_tray_region, apply_tray_region_with_redraw, disable_dwm_transitions,
-    find_hwnd_by_title, force_redraw, snapshot_hwnd_state, OverlayHwnd, PillRect,
+    apply_tray_region_hwnd_with_redraw, disable_dwm_transitions, find_hwnd_by_title, force_redraw,
+    snapshot_hwnd_state, OverlayHwnd, PillRect,
 };
 
 const OVERLAY_VIEWPORT_TITLE: &str = "KeyOverlayOverlay";
@@ -34,6 +34,14 @@ const PILL_MIN_H: i32 = 46;
 const PILL_MIN_W: i32 = 88;
 const PILL_RADIUS: i32 = 18;
 const MOUSE_ICON_TOKEN: &str = "__MOUSE_ICON__";
+
+fn overlay_viewport_title() -> String {
+    if overlay_startup_diagnostics::enabled() {
+        format!("{OVERLAY_VIEWPORT_TITLE} (pid={})", std::process::id())
+    } else {
+        OVERLAY_VIEWPORT_TITLE.to_string()
+    }
+}
 
 #[derive(Clone, Copy)]
 struct ScrollHighlight {
@@ -345,7 +353,6 @@ struct App {
     input_state: InputState,
     screen_size: [f32; 2],
     last_region_geometry: Option<OverlayGeometry>,
-    region_test_applied: bool,
     last_hwnd: Option<OverlayHwnd>,
     transitions_disabled: bool,
     manual_preview_until: Option<Instant>,
@@ -360,6 +367,10 @@ struct App {
     viewport_config_logged: bool,
     last_overlay_visible: bool,
     fixed_experiment_pos: Option<egui::Pos2>,
+    pending_region: Option<(i32, i32, i32)>,
+    region_settle_deadline: Option<Instant>,
+    region_redraw_needed: bool,
+    region_debounce: Duration,
 }
 
 impl App {
@@ -387,7 +398,6 @@ impl App {
             input_state: InputState::new(),
             screen_size: [1920.0, 1080.0],
             last_region_geometry: None,
-            region_test_applied: false,
             last_hwnd: None,
             transitions_disabled: false,
             manual_preview_until: None,
@@ -401,6 +411,10 @@ impl App {
             viewport_config_logged: false,
             last_overlay_visible: false,
             fixed_experiment_pos: None,
+            pending_region: None,
+            region_settle_deadline: None,
+            region_redraw_needed: false,
+            region_debounce: Duration::from_millis(120),
         }
     }
 
@@ -567,7 +581,12 @@ impl App {
         }
     }
 
-    fn maybe_apply_window_region(&mut self, geometry: &OverlayGeometry, currently_visible: bool) {
+    fn maybe_apply_window_region(
+        &mut self,
+        overlay_title: &str,
+        geometry: &OverlayGeometry,
+        currently_visible: bool,
+    ) {
         let now = Instant::now();
 
         if self.startup_experiment == overlay_startup_diagnostics::OverlayExperiment::DelayRegion {
@@ -587,51 +606,48 @@ impl App {
             return;
         }
 
+        let width = geometry.width_px;
+        let height = geometry.height_px;
+        let radius =
+            ((TRAY_RADIUS as f32) * self.draft.overlay_scale.clamp(0.6, 2.0)).round() as i32;
+        let desired = (width, height, radius);
+
+        if self.pending_region != Some(desired) {
+            self.pending_region = Some(desired);
+            self.region_settle_deadline = Some(now + self.region_debounce);
+            overlay_startup_diagnostics::log_event(format!(
+                "region scheduler queued {}x{} radius={} settle={}ms",
+                width,
+                height,
+                radius,
+                self.region_debounce.as_millis()
+            ));
+        }
+
+        if let Some(deadline) = self.region_settle_deadline {
+            if now < deadline {
+                return;
+            }
+        }
+
         if self.last_region_geometry.as_ref() == Some(geometry) {
             return;
         }
 
-        let width = geometry.width_px;
-        let height = geometry.height_px;
         let redraw = self.startup_experiment
             != overlay_startup_diagnostics::OverlayExperiment::RegionNoRedraw;
 
-        let hwnd = if !self.region_test_applied {
-            let hwnd = apply_test_region(OVERLAY_VIEWPORT_TITLE);
-            self.region_test_applied = true;
-            hwnd
-        } else if redraw {
-            apply_tray_region(
-                OVERLAY_VIEWPORT_TITLE,
-                width,
-                height,
-                ((TRAY_RADIUS as f32) * self.draft.overlay_scale.clamp(0.6, 2.0)).round() as i32,
-            )
-        } else {
-            apply_tray_region_with_redraw(
-                OVERLAY_VIEWPORT_TITLE,
-                width,
-                height,
-                ((TRAY_RADIUS as f32) * self.draft.overlay_scale.clamp(0.6, 2.0)).round() as i32,
-                false,
-            )
-        };
+        if self.last_hwnd.is_none() {
+            self.last_hwnd = find_hwnd_by_title(overlay_title);
+        }
+
+        let hwnd = self.last_hwnd;
 
         if let Some(hwnd_val) = hwnd {
             overlay_startup_diagnostics::log_event(format!(
                 "region apply path hwnd={hwnd_val:?} currently_visible={currently_visible}"
             ));
             snapshot_hwnd_state(hwnd_val, "after-region-apply");
-
-            if let Some(last) = self.last_hwnd {
-                if last != hwnd_val {
-                    eprintln!("[overlay-region] HWND changed old={last:?} new={hwnd_val:?}");
-                    self.transitions_disabled = false;
-                    overlay_startup_diagnostics::log_event(
-                        "HWND changed; transitions_disabled reset",
-                    );
-                }
-            }
 
             let skip_dwm = self.startup_experiment
                 == overlay_startup_diagnostics::OverlayExperiment::NoDwmDisable;
@@ -647,8 +663,18 @@ impl App {
                 );
             }
 
-            if !redraw {
+            let region_ok =
+                apply_tray_region_hwnd_with_redraw(hwnd_val, width, height, radius, false);
+
+            if region_ok {
+                self.region_redraw_needed = true;
+                self.region_settle_deadline = None;
+                self.pending_region = None;
+            }
+
+            if (redraw || self.region_redraw_needed) && region_ok {
                 force_redraw(hwnd_val);
+                self.region_redraw_needed = false;
             }
 
             self.last_hwnd = Some(hwnd_val);
@@ -662,7 +688,7 @@ impl App {
 
     fn maybe_log_hwnd_state(&mut self) {
         if self.last_hwnd.is_none() {
-            self.last_hwnd = find_hwnd_by_title(OVERLAY_VIEWPORT_TITLE);
+            self.last_hwnd = find_hwnd_by_title(&overlay_viewport_title());
         }
 
         if let Some(hwnd) = self.last_hwnd {
@@ -797,6 +823,7 @@ impl eframe::App for App {
                 computed_win_pos
             };
             let overlay_id = egui::ViewportId::from_hash_of("overlay");
+            let overlay_title = overlay_viewport_title();
             let startup_hidden_mode = self.startup_experiment
                 == overlay_startup_diagnostics::OverlayExperiment::HiddenUntilReady;
             let should_show_overlay = overlay_visible;
@@ -805,7 +832,7 @@ impl eframe::App for App {
                 == overlay_startup_diagnostics::OverlayExperiment::EarlyDwmDisable
                 && !self.transitions_disabled
             {
-                if let Some(hwnd) = find_hwnd_by_title(OVERLAY_VIEWPORT_TITLE) {
+                if let Some(hwnd) = find_hwnd_by_title(&overlay_title) {
                     overlay_startup_diagnostics::log_event(
                         "experiment A: disable DWM transitions as soon as HWND exists",
                     );
@@ -855,7 +882,7 @@ impl eframe::App for App {
                     win_pos.y
                 ));
                 // Resize/reposition first, then apply region in window-local coordinates.
-                self.maybe_apply_window_region(&geometry, overlay_visible);
+                self.maybe_apply_window_region(&overlay_title, &geometry, overlay_visible);
 
                 if self.startup_experiment
                     == overlay_startup_diagnostics::OverlayExperiment::HiddenUntilReady
@@ -907,7 +934,7 @@ impl eframe::App for App {
                     egui::ViewportBuilder::default()
                         .with_inner_size([geometry.width_points, geometry.height_points])
                         .with_position(win_pos)
-                        .with_title(OVERLAY_VIEWPORT_TITLE)
+                        .with_title(overlay_title.clone())
                         .with_decorations(false)
                         .with_titlebar_shown(false)
                         .with_titlebar_buttons_shown(false)

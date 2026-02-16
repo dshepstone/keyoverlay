@@ -79,6 +79,14 @@ Supported experiment values:
 
 Legacy aliases are still accepted (`A..G`, old debug env names) for compatibility.
 
+## Stabilization changes implemented
+
+- **HWND-first region path**: region application now targets a resolved/stored HWND and uses title lookup only as fallback discovery. Title lookup validates that the matched HWND belongs to the current process via `GetWindowThreadProcessId`.
+- **Unique diagnostic title**: when diagnostics are enabled, overlay viewport title includes the PID to reduce `FindWindowW` ambiguity.
+- **Debounced region scheduler**: region requests are coalesced with a settle window (~120ms). `SetWindowRgn` is not applied for every transient size oscillation.
+- **Redraw coalescing**: region is applied with `redraw=false` while settling, then a single explicit redraw is issued once stabilized.
+- **Stable-window behavior**: overlay viewport is hidden instead of closed when inactive, preventing destroy/recreate flicker.
+
 ## Recommendations / next fixes (priority order)
 
 1. If logs show flicker from visibility transitions, make `hidden_until_ready` the default on Windows startup.
@@ -89,4 +97,3 @@ Legacy aliases are still accepted (`A..G`, old debug env names) for compatibilit
 ## Notes on evidence quality
 
 This report includes expected sample logs because this environment cannot run native Windows GUI behavior. The code now emits the required HWND snapshots and lifecycle markers to capture real evidence on Windows machines.
-

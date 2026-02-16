@@ -30,8 +30,8 @@ mod imp {
         RDW_ALLCHILDREN, RDW_ERASE, RDW_FRAME, RDW_INVALIDATE, RDW_UPDATENOW,
     };
     use windows::Win32::UI::WindowsAndMessaging::{
-        FindWindowW, GetClientRect, GetWindowLongPtrW, GetWindowRect, IsWindowVisible, GWL_EXSTYLE,
-        GWL_STYLE,
+        FindWindowW, GetClassNameW, GetClientRect, GetWindowLongPtrW, GetWindowRect,
+        GetWindowTextW, GetWindowThreadProcessId, IsWindowVisible, GWL_EXSTYLE, GWL_STYLE,
     };
 
     use crate::overlay_startup_diagnostics;
@@ -40,17 +40,81 @@ mod imp {
         OsStr::new(s).encode_wide().chain(once(0)).collect()
     }
 
+    fn from_wide(buf: &[u16]) -> String {
+        let len = buf.iter().position(|c| *c == 0).unwrap_or(buf.len());
+        String::from_utf16_lossy(&buf[..len])
+    }
+
+    fn hwnd_in_current_process(hwnd: HWND) -> bool {
+        let mut pid = 0u32;
+        let _thread = unsafe { GetWindowThreadProcessId(hwnd, Some(&mut pid)) };
+        pid == std::process::id()
+    }
+
+    fn hwnd_debug_identity(hwnd: HWND) -> String {
+        let mut title_buf = [0u16; 256];
+        let mut class_buf = [0u16; 128];
+        let _ = unsafe { GetWindowTextW(hwnd, &mut title_buf) };
+        let _ = unsafe { GetClassNameW(hwnd, &mut class_buf) };
+        let title = from_wide(&title_buf);
+        let class = from_wide(&class_buf);
+        format!("title='{title}' class='{class}'")
+    }
+
     pub fn find_hwnd_by_title(title: &str) -> Option<HWND> {
         let title_w = to_wide(title);
         let hwnd = unsafe { FindWindowW(PCWSTR::null(), PCWSTR(title_w.as_ptr())) }.ok()?;
         if hwnd.0.is_null() {
             None
+        } else if !hwnd_in_current_process(hwnd) {
+            overlay_startup_diagnostics::log_event(format!(
+                "FindWindowW matched foreign process hwnd={hwnd:?} {}; ignoring",
+                hwnd_debug_identity(hwnd)
+            ));
+            None
         } else {
             overlay_startup_diagnostics::log_event(format!(
-                "FindWindowW succeeded for title='{title}' hwnd={hwnd:?}"
+                "FindWindowW succeeded for title='{title}' hwnd={hwnd:?} {}",
+                hwnd_debug_identity(hwnd)
             ));
             Some(hwnd)
         }
+    }
+
+    pub fn apply_tray_region_hwnd_with_redraw(
+        hwnd: HWND,
+        width: i32,
+        height: i32,
+        tray_radius_px: i32,
+        redraw: bool,
+    ) -> bool {
+        let tray_w = width.max(1);
+        let tray_h = height.max(1);
+        let rr = tray_radius_px.max(0);
+
+        overlay_startup_diagnostics::log_event(format!(
+            "SetWindowRgn request hwnd={hwnd:?} size={}x{} radius={} redraw={redraw}",
+            tray_w, tray_h, rr
+        ));
+        snapshot_hwnd_state(hwnd, "before-setwindowrgn");
+
+        let tray_rgn = unsafe { CreateRoundRectRgn(0, 0, tray_w, tray_h, rr * 2, rr * 2) };
+        if tray_rgn.0.is_null() {
+            let err = unsafe { GetLastError() };
+            eprintln!("[overlay-region] CreateRoundRectRgn(TRAY) failed err={err:?}");
+            return false;
+        }
+
+        let res = unsafe { SetWindowRgn(hwnd, tray_rgn, redraw) };
+        if res == 0 {
+            let err = unsafe { GetLastError() };
+            eprintln!("[overlay-region] SetWindowRgn(TRAY) failed err={err:?}");
+            let _ = unsafe { DeleteObject(tray_rgn) };
+            return false;
+        }
+
+        snapshot_hwnd_state(hwnd, "after-setwindowrgn");
+        true
     }
 
     pub fn disable_dwm_transitions(hwnd: HWND) -> Result<(), String> {
@@ -118,31 +182,7 @@ mod imp {
         redraw: bool,
     ) -> Option<HWND> {
         let hwnd = find_hwnd_by_title(title)?;
-        let tray_w = width.max(1);
-        let tray_h = height.max(1);
-        let rr = tray_radius_px.max(0);
-
-        overlay_startup_diagnostics::log_event(format!(
-            "SetWindowRgn request hwnd={hwnd:?} size={}x{} radius={} redraw={redraw}",
-            tray_w, tray_h, rr
-        ));
-        snapshot_hwnd_state(hwnd, "before-setwindowrgn");
-
-        let tray_rgn = unsafe { CreateRoundRectRgn(0, 0, tray_w, tray_h, rr * 2, rr * 2) };
-        if tray_rgn.0.is_null() {
-            let err = unsafe { GetLastError() };
-            eprintln!("[overlay-region] CreateRoundRectRgn(TRAY) failed err={err:?}");
-            return Some(hwnd);
-        }
-
-        let res = unsafe { SetWindowRgn(hwnd, tray_rgn, redraw) };
-        if res == 0 {
-            let err = unsafe { GetLastError() };
-            eprintln!("[overlay-region] SetWindowRgn(TRAY) failed err={err:?}");
-            let _ = unsafe { DeleteObject(tray_rgn) };
-        }
-
-        snapshot_hwnd_state(hwnd, "after-setwindowrgn");
+        let _ = apply_tray_region_hwnd_with_redraw(hwnd, width, height, tray_radius_px, redraw);
         Some(hwnd)
     }
 
@@ -194,8 +234,9 @@ mod imp {
 
 #[cfg(target_os = "windows")]
 pub use imp::{
-    apply_test_region, apply_tray_region, apply_tray_region_with_redraw, disable_dwm_transitions,
-    find_hwnd_by_title, force_redraw, snapshot_hwnd_state,
+    apply_test_region, apply_tray_region, apply_tray_region_hwnd_with_redraw,
+    apply_tray_region_with_redraw, disable_dwm_transitions, find_hwnd_by_title, force_redraw,
+    snapshot_hwnd_state,
 };
 
 #[cfg(not(target_os = "windows"))]
@@ -222,6 +263,17 @@ pub fn apply_tray_region_with_redraw(
     _redraw: bool,
 ) -> Option<OverlayHwnd> {
     None
+}
+
+#[cfg(not(target_os = "windows"))]
+pub fn apply_tray_region_hwnd_with_redraw(
+    _hwnd: OverlayHwnd,
+    _width: i32,
+    _height: i32,
+    _tray_radius_px: i32,
+    _redraw: bool,
+) -> bool {
+    false
 }
 
 #[cfg(not(target_os = "windows"))]
