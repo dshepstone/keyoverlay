@@ -1070,6 +1070,13 @@ impl eframe::App for App {
                 computed_win_pos
             };
 
+            let overlay_id = egui::ViewportId::from_hash_of("overlay");
+            let overlay_title = overlay_viewport_title();
+            // Default to hide-until-ready on first activation to avoid user-visible
+            // intermediate geometry/style/region transitions.
+            let startup_hidden_mode = true;
+            let should_show_overlay = overlay_visible;
+
             if should_show_overlay {
                 if self.tray_state.left_anchor.is_none() {
                     self.tray_state.left_anchor = Some(win_pos);
@@ -1080,12 +1087,6 @@ impl eframe::App for App {
             } else {
                 self.tray_state.left_anchor = None;
             }
-            let overlay_id = egui::ViewportId::from_hash_of("overlay");
-            let overlay_title = overlay_viewport_title();
-            // Default to hide-until-ready on first activation to avoid user-visible
-            // intermediate geometry/style/region transitions.
-            let startup_hidden_mode = true;
-            let should_show_overlay = overlay_visible;
 
             if self.startup_experiment
                 == overlay_startup_diagnostics::OverlayExperiment::EarlyDwmDisable

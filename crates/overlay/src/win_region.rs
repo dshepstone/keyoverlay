@@ -237,6 +237,7 @@ mod imp {
 }
 
 #[cfg(target_os = "windows")]
+#[allow(unused_imports)]
 pub use imp::{
     apply_test_region, apply_tray_region, apply_tray_region_hwnd_with_redraw,
     apply_tray_region_with_redraw, disable_dwm_transitions, find_hwnd_by_title, force_redraw,
