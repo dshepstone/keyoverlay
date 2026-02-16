@@ -423,6 +423,7 @@ fn tab_position(app: &mut App, ui: &mut egui::Ui) {
 
     let mut resolution_changed = false;
     let mut scale_changed = false;
+    let mut position_dirty = false;
 
     ui.horizontal(|ui| {
         ui.label("Display resolution:");
@@ -445,6 +446,7 @@ fn tab_position(app: &mut App, ui: &mut egui::Ui) {
                         app.draft.display_width_px = *w;
                         app.draft.display_height_px = *h;
                         resolution_changed = true;
+                        position_dirty = true;
                     }
                 }
             });
@@ -466,6 +468,7 @@ fn tab_position(app: &mut App, ui: &mut egui::Ui) {
                     if ui.selectable_label(selected, *label).clicked() {
                         app.draft.display_scale = *scale;
                         scale_changed = true;
+                        position_dirty = true;
                     }
                 }
             });
@@ -492,6 +495,7 @@ fn tab_position(app: &mut App, ui: &mut egui::Ui) {
 
         if selected_position != app.draft.position {
             app.draft.position = selected_position;
+            position_dirty = true;
             if app.draft.position == OverlayPosition::Manual {
                 app.sync_manual_to_lower_right();
                 app.preview_manual_position();
@@ -522,6 +526,7 @@ fn tab_position(app: &mut App, ui: &mut egui::Ui) {
 
     if manual_slider_changed && app.draft.position == OverlayPosition::Manual {
         app.preview_manual_position();
+        position_dirty = true;
     }
 
     // When the user touches X/Y sliders, auto-switch to Manual mode so the
@@ -545,6 +550,7 @@ fn tab_position(app: &mut App, ui: &mut egui::Ui) {
         if command_activated_on_press(ui, snap_id, &snap_resp) {
             app.sync_manual_to_lower_right();
             app.preview_manual_position();
+            position_dirty = true;
         }
     }
 
@@ -553,7 +559,8 @@ fn tab_position(app: &mut App, ui: &mut egui::Ui) {
     ui.horizontal(|ui| {
         ui.label("Layout direction:");
         for layout in OverlayLayout::ALL {
-            ui.selectable_value(&mut app.draft.layout, layout, layout.label());
+            let response = ui.selectable_value(&mut app.draft.layout, layout, layout.label());
+            position_dirty |= response.changed();
         }
     });
 
@@ -562,12 +569,16 @@ fn tab_position(app: &mut App, ui: &mut egui::Ui) {
 
     ui.horizontal(|ui| {
         ui.label("Horizontal margin:");
-        ui.add(egui::Slider::new(&mut app.draft.margin_x, 0.0..=200.0).suffix(" px"));
+        let response =
+            ui.add(egui::Slider::new(&mut app.draft.margin_x, 0.0..=200.0).suffix(" px"));
+        position_dirty |= response.changed();
     });
 
     ui.horizontal(|ui| {
         ui.label("Vertical margin:");
-        ui.add(egui::Slider::new(&mut app.draft.margin_y, 0.0..=200.0).suffix(" px"));
+        let response =
+            ui.add(egui::Slider::new(&mut app.draft.margin_y, 0.0..=200.0).suffix(" px"));
+        position_dirty |= response.changed();
     });
 
     ui.add_space(12.0);
@@ -575,13 +586,21 @@ fn tab_position(app: &mut App, ui: &mut egui::Ui) {
 
     ui.horizontal(|ui| {
         ui.label("Width:");
-        ui.add(egui::Slider::new(&mut app.draft.overlay_width, 100.0..=800.0).suffix(" px"));
+        let response =
+            ui.add(egui::Slider::new(&mut app.draft.overlay_width, 100.0..=800.0).suffix(" px"));
+        position_dirty |= response.changed();
     });
 
     ui.horizontal(|ui| {
         ui.label("Height:");
-        ui.add(egui::Slider::new(&mut app.draft.overlay_height, 60.0..=600.0).suffix(" px"));
+        let response =
+            ui.add(egui::Slider::new(&mut app.draft.overlay_height, 60.0..=600.0).suffix(" px"));
+        position_dirty |= response.changed();
     });
+
+    if position_dirty {
+        app.apply();
+    }
 }
 
 fn tab_about(ui: &mut egui::Ui) {

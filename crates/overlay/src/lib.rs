@@ -88,6 +88,12 @@ impl SingleTileState {
         self.visible_alpha = 1.0;
     }
 
+    fn register_release(&mut self, now: Instant) {
+        self.is_down = false;
+        self.down_until = None;
+        self.last_event_at = now;
+    }
+
     fn tick(&mut self, now: Instant, dt: f32, idle_ms: u64) {
         if self.is_down && self.down_until.is_some_and(|until| now >= until) {
             self.is_down = false;
@@ -195,7 +201,10 @@ impl InputState {
         if mouse_debug_enabled() {
             match &event {
                 InputEvent::MouseClick(e) => {
-                    eprintln!("[mouse-debug] click button={} t={now:?}", e.button)
+                    eprintln!(
+                        "[mouse-debug] click button={} down={} t={now:?}",
+                        e.button, e.is_down
+                    )
                 }
                 InputEvent::Scroll(e) => {
                     eprintln!("[mouse-debug] wheel dir={} t={now:?}", e.direction)
@@ -228,12 +237,16 @@ impl InputState {
             InputEvent::MouseClick(e) => {
                 self.pressed_mouse_buttons.clear();
                 self.last_mouse_activity = now;
-                self.mouse_icon_active = true;
-                self.last_mouse_highlight = MouseHighlight::from_button(e.button);
                 self.last_mouse_was_scroll = false;
                 self.mouse_label = Some(format!("{} Click", e.button));
                 self.pending_left_press_at = None;
                 self.pending_left_press_moved = false;
+                if e.is_down {
+                    self.mouse_icon_active = true;
+                    self.last_mouse_highlight = MouseHighlight::from_button(e.button);
+                } else {
+                    self.last_mouse_highlight = MouseHighlight::None;
+                }
             }
             InputEvent::Scroll(e) => {
                 self.pressed_mouse_buttons.clear();
@@ -599,11 +612,18 @@ impl App {
         match event {
             InputEvent::Key(e) => {
                 let label = e.key.to_string();
-                self.tray_state
-                    .key_tile
-                    .register_press(label.clone(), now, 120);
-                if single_tile_debug_enabled() {
-                    eprintln!("[overlay-single] KeyDown label={label}");
+                if e.is_down {
+                    self.tray_state
+                        .key_tile
+                        .register_press(label.clone(), now, 400);
+                    if single_tile_debug_enabled() {
+                        eprintln!("[overlay-single] KeyDown label={label}");
+                    }
+                } else {
+                    self.tray_state.key_tile.register_release(now);
+                    if single_tile_debug_enabled() {
+                        eprintln!("[overlay-single] KeyUp label={label}");
+                    }
                 }
             }
             InputEvent::MouseClick(e) => {
@@ -613,12 +633,20 @@ impl App {
                     MouseButton::Middle => "MMB",
                 }
                 .to_string();
-                self.tray_state
-                    .mouse_tile
-                    .register_press(label.clone(), now, 110);
-                self.tray_state.mouse_highlight = MouseHighlight::from_button(e.button);
-                if single_tile_debug_enabled() {
-                    eprintln!("[overlay-single] MouseDown label={label}");
+                if e.is_down {
+                    self.tray_state
+                        .mouse_tile
+                        .register_press(label.clone(), now, 800);
+                    self.tray_state.mouse_highlight = MouseHighlight::from_button(e.button);
+                    if single_tile_debug_enabled() {
+                        eprintln!("[overlay-single] MouseDown label={label}");
+                    }
+                } else {
+                    self.tray_state.mouse_tile.register_release(now);
+                    self.tray_state.mouse_highlight = MouseHighlight::None;
+                    if single_tile_debug_enabled() {
+                        eprintln!("[overlay-single] MouseUp label={label}");
+                    }
                 }
             }
             InputEvent::Scroll(e) => {
@@ -629,7 +657,7 @@ impl App {
                 .to_string();
                 self.tray_state
                     .mouse_tile
-                    .register_press(label.clone(), now, 110);
+                    .register_press(label.clone(), now, 140);
                 self.tray_state.mouse_highlight = MouseHighlight::None;
                 if single_tile_debug_enabled() {
                     eprintln!("[overlay-single] MouseWheel label={label}");
