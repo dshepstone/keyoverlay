@@ -25,11 +25,13 @@ mod imp {
     use windows::Win32::Graphics::Dwm::{
         DwmGetWindowAttribute, DwmSetWindowAttribute, DWMWINDOWATTRIBUTE,
     };
-    use windows::Win32::Graphics::Gdi::{CreateRoundRectRgn, DeleteObject, SetWindowRgn};
+    use windows::Win32::Graphics::Gdi::{
+        CreateRoundRectRgn, DeleteObject, InvalidateRect, RedrawWindow, SetWindowRgn,
+        RDW_ALLCHILDREN, RDW_ERASE, RDW_FRAME, RDW_INVALIDATE, RDW_UPDATENOW,
+    };
     use windows::Win32::UI::WindowsAndMessaging::{
-        FindWindowW, GetClientRect, GetWindowLongPtrW, GetWindowRect, InvalidateRect,
-        IsWindowVisible, RedrawWindow, GWL_EXSTYLE, GWL_STYLE, RDW_ALLCHILDREN, RDW_ERASE,
-        RDW_FRAME, RDW_INVALIDATE, RDW_UPDATENOW,
+        FindWindowW, GetClientRect, GetWindowLongPtrW, GetWindowRect, IsWindowVisible, GWL_EXSTYLE,
+        GWL_STYLE,
     };
 
     use crate::startup_debug;
