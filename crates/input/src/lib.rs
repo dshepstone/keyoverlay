@@ -524,12 +524,6 @@ impl ModifierState {
         self.used_as_modifier |= self.as_modifiers();
     }
 
-    fn modifier_was_used(&self, key: Key) -> bool {
-        modifier_flag(key)
-            .map(|flag| self.used_as_modifier.contains(flag))
-            .unwrap_or(false)
-    }
-
     fn clear_modifier_used(&mut self, key: Key) {
         if let Some(flag) = modifier_flag(key) {
             self.used_as_modifier.remove(flag);
@@ -576,6 +570,14 @@ pub fn spawn_input_listener(tx: mpsc::Sender<InputEvent>) {
                     if let Some(key) = rdev_key_to_key(rkey) {
                         if is_modifier_key(key) {
                             state.press(key);
+                            let modifiers = state.as_modifiers();
+                            let mut clean_mods = modifiers;
+                            if let Some(flag) = modifier_flag(key) {
+                                clean_mods.remove(flag);
+                            }
+
+                            let ke = KeyEvent::new(key, clean_mods);
+                            let _ = tx.send(InputEvent::Key(ke));
                         } else {
                             let modifiers = state.as_modifiers();
                             state.mark_active_modifiers_used();
@@ -587,19 +589,6 @@ pub fn spawn_input_listener(tx: mpsc::Sender<InputEvent>) {
                 EventType::KeyRelease(rkey) => {
                     if let Some(key) = rdev_key_to_key(rkey) {
                         if is_modifier_key(key) {
-                            // If modifier was released without being used in a key chord,
-                            // emit it as a standalone key event.
-                            let modifiers = state.as_modifiers();
-                            let mut clean_mods = modifiers;
-                            if let Some(flag) = modifier_flag(key) {
-                                clean_mods.remove(flag);
-                            }
-
-                            if !state.modifier_was_used(key) {
-                                let ke = KeyEvent::new(key, clean_mods);
-                                let _ = tx.send(InputEvent::Key(ke));
-                            }
-
                             state.release(key);
                             state.clear_modifier_used(key);
                         }
