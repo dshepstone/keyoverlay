@@ -19,7 +19,7 @@ use mouse_icon::{draw_mouse_icon, MouseHighlight, ScrollArrowDirection};
 
 use win_region::{
     apply_tray_region_hwnd_with_redraw, disable_dwm_transitions, find_hwnd_by_title, force_redraw,
-    snapshot_hwnd_state, OverlayHwnd, PillRect,
+    hwnd_is_valid, snapshot_hwnd_state, OverlayHwnd, PillRect,
 };
 
 const OVERLAY_VIEWPORT_TITLE: &str = "KeyOverlayOverlay";
@@ -915,6 +915,12 @@ impl App {
             self.last_hwnd = find_hwnd_by_title(overlay_title);
         }
 
+        if self.last_hwnd.is_some_and(|hwnd| !hwnd_is_valid(hwnd)) {
+            overlay_startup_diagnostics::log_event("cached HWND invalid; reacquiring");
+            self.last_hwnd = None;
+            self.transitions_disabled = false;
+        }
+
         let hwnd = self.last_hwnd;
 
         if let Some(hwnd_val) = hwnd {
@@ -944,20 +950,30 @@ impl App {
                 self.region_redraw_needed = true;
                 self.region_settle_deadline = None;
                 self.pending_region = None;
-            }
 
-            if (redraw || self.region_redraw_needed) && region_ok {
-                force_redraw(hwnd_val);
-                self.region_redraw_needed = false;
-            }
+                if redraw || self.region_redraw_needed {
+                    force_redraw(hwnd_val);
+                    self.region_redraw_needed = false;
+                }
 
-            self.last_hwnd = Some(hwnd_val);
-            self.startup_region_prepared = true;
+                self.last_hwnd = Some(hwnd_val);
+                self.startup_region_prepared = true;
+                self.last_region_geometry = Some(geometry.clone());
+            } else {
+                overlay_startup_diagnostics::log_event(
+                    "SetWindowRgn failed; dropping cached HWND and retrying with fresh handle",
+                );
+                self.last_hwnd = None;
+                self.transitions_disabled = false;
+                self.startup_region_prepared = false;
+                self.last_region_geometry = None;
+                self.region_settle_deadline = Some(now + self.region_debounce);
+                self.pending_region = Some(desired);
+            }
         } else {
             overlay_startup_diagnostics::log_event("FindWindowW did not return overlay HWND yet");
+            self.last_region_geometry = None;
         }
-
-        self.last_region_geometry = Some(geometry.clone());
     }
 
     fn maybe_log_hwnd_state(&mut self) {

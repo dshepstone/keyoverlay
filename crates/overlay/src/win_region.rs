@@ -32,7 +32,8 @@ mod imp {
     use windows::Win32::UI::HiDpi::GetDpiForWindow;
     use windows::Win32::UI::WindowsAndMessaging::{
         FindWindowW, GetClassNameW, GetClientRect, GetWindowLongPtrW, GetWindowRect,
-        GetWindowTextW, GetWindowThreadProcessId, IsWindowVisible, GWL_EXSTYLE, GWL_STYLE,
+        GetWindowTextW, GetWindowThreadProcessId, IsWindow, IsWindowVisible, GWL_EXSTYLE,
+        GWL_STYLE,
     };
 
     use crate::overlay_startup_diagnostics;
@@ -89,6 +90,13 @@ mod imp {
         tray_radius_px: i32,
         redraw: bool,
     ) -> bool {
+        if !unsafe { IsWindow(hwnd).as_bool() } {
+            overlay_startup_diagnostics::log_event(format!(
+                "SetWindowRgn skipped: invalid HWND {hwnd:?}"
+            ));
+            return false;
+        }
+
         let tray_w = width.max(1);
         let tray_h = height.max(1);
         let rr = tray_radius_px.max(0);
@@ -234,6 +242,10 @@ mod imp {
     ) -> Option<HWND> {
         apply_tray_region_with_redraw(title, width, height, tray_radius_px, true)
     }
+
+    pub fn hwnd_is_valid(hwnd: HWND) -> bool {
+        unsafe { IsWindow(hwnd).as_bool() }
+    }
 }
 
 #[cfg(target_os = "windows")]
@@ -241,7 +253,7 @@ mod imp {
 pub use imp::{
     apply_test_region, apply_tray_region, apply_tray_region_hwnd_with_redraw,
     apply_tray_region_with_redraw, disable_dwm_transitions, find_hwnd_by_title, force_redraw,
-    snapshot_hwnd_state,
+    hwnd_is_valid, snapshot_hwnd_state,
 };
 
 #[cfg(not(target_os = "windows"))]
@@ -282,6 +294,10 @@ pub fn apply_tray_region_hwnd_with_redraw(
 }
 
 #[cfg(not(target_os = "windows"))]
+pub fn hwnd_is_valid(_hwnd: OverlayHwnd) -> bool {
+    false
+}
+
 pub fn find_hwnd_by_title(_title: &str) -> Option<OverlayHwnd> {
     None
 }

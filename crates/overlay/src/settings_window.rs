@@ -524,7 +524,10 @@ fn tab_position(app: &mut App, ui: &mut egui::Ui) {
         manual_slider_changed |= response.changed();
     });
 
-    if manual_slider_changed && app.draft.position == OverlayPosition::Manual {
+    if manual_slider_changed {
+        if app.draft.position != OverlayPosition::Manual {
+            app.draft.position = OverlayPosition::Manual;
+        }
         app.preview_manual_position();
         position_dirty = true;
     }
