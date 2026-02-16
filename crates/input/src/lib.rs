@@ -466,10 +466,19 @@ fn rdev_key_to_key(rkey: rdev::Key) -> Option<Key> {
     Some(key)
 }
 
-/// Returns true if this key is a modifier key (should not produce a standalone event
-/// unless pressed alone).
+/// Returns true if this key is a modifier key.
 fn is_modifier_key(key: Key) -> bool {
     matches!(key, Key::Shift | Key::Ctrl | Key::Alt | Key::Win)
+}
+
+fn modifier_flag(key: Key) -> Option<Modifiers> {
+    match key {
+        Key::Shift => Some(Modifiers::SHIFT),
+        Key::Ctrl => Some(Modifiers::CTRL),
+        Key::Alt => Some(Modifiers::ALT),
+        Key::Win => Some(Modifiers::WIN),
+        _ => None,
+    }
 }
 
 /// Track currently held modifier state.
@@ -479,6 +488,7 @@ struct ModifierState {
     ctrl: bool,
     alt: bool,
     win: bool,
+    used_as_modifier: Modifiers,
 }
 
 impl ModifierState {
@@ -497,6 +507,22 @@ impl ModifierState {
             m |= Modifiers::WIN;
         }
         m
+    }
+
+    fn mark_active_modifiers_used(&mut self) {
+        self.used_as_modifier |= self.as_modifiers();
+    }
+
+    fn modifier_was_used(&self, key: Key) -> bool {
+        modifier_flag(key)
+            .map(|flag| self.used_as_modifier.contains(flag))
+            .unwrap_or(false)
+    }
+
+    fn clear_modifier_used(&mut self, key: Key) {
+        if let Some(flag) = modifier_flag(key) {
+            self.used_as_modifier.remove(flag);
+        }
     }
 
     fn press(&mut self, key: Key) {
@@ -541,6 +567,7 @@ pub fn spawn_input_listener(tx: mpsc::Sender<InputEvent>) {
                             state.press(key);
                         } else {
                             let modifiers = state.as_modifiers();
+                            state.mark_active_modifiers_used();
                             let ke = KeyEvent::new(key, modifiers);
                             let _ = tx.send(InputEvent::Key(ke));
                         }
@@ -549,19 +576,21 @@ pub fn spawn_input_listener(tx: mpsc::Sender<InputEvent>) {
                 EventType::KeyRelease(rkey) => {
                     if let Some(key) = rdev_key_to_key(rkey) {
                         if is_modifier_key(key) {
-                            // If modifier was released without any other key in between,
+                            // If modifier was released without being used in a key chord,
                             // emit it as a standalone key event.
                             let modifiers = state.as_modifiers();
-                            // Remove this modifier from the reported modifiers
                             let mut clean_mods = modifiers;
-                            match key {
-                                Key::Shift => clean_mods.remove(Modifiers::SHIFT),
-                                Key::Ctrl => clean_mods.remove(Modifiers::CTRL),
-                                Key::Alt => clean_mods.remove(Modifiers::ALT),
-                                Key::Win => clean_mods.remove(Modifiers::WIN),
-                                _ => {}
+                            if let Some(flag) = modifier_flag(key) {
+                                clean_mods.remove(flag);
                             }
+
+                            if !state.modifier_was_used(key) {
+                                let ke = KeyEvent::new(key, clean_mods);
+                                let _ = tx.send(InputEvent::Key(ke));
+                            }
+
                             state.release(key);
+                            state.clear_modifier_used(key);
                         }
                     }
                 }
