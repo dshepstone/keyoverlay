@@ -49,6 +49,59 @@ struct ScrollHighlight {
     last_event: Instant,
 }
 
+#[derive(Clone, Debug, PartialEq, Eq, Hash)]
+enum TokenId {
+    Key(String),
+    Mouse(MouseButton),
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum TokenKind {
+    Key,
+    Mouse,
+}
+
+#[derive(Clone)]
+struct TrayToken {
+    id: TokenId,
+    label: String,
+    kind: TokenKind,
+    pressed_at: Instant,
+    released_at: Option<Instant>,
+    bump_until: Option<Instant>,
+    synthetic_release_at: Instant,
+}
+
+#[derive(Clone)]
+struct RenderToken {
+    label: String,
+    is_mouse: bool,
+    mouse_highlight: MouseHighlight,
+    alpha: f32,
+    scale: f32,
+    pulse: f32,
+    font_size: f32,
+}
+
+#[derive(Clone)]
+struct OverlayTrayState {
+    tokens: Vec<TrayToken>,
+    current_size: egui::Vec2,
+    desired_size: egui::Vec2,
+    left_anchor: Option<egui::Pos2>,
+}
+
+impl OverlayTrayState {
+    fn new() -> Self {
+        Self {
+            tokens: Vec::new(),
+            current_size: egui::vec2(0.0, 0.0),
+            desired_size: egui::vec2(0.0, 0.0),
+            left_anchor: None,
+        }
+    }
+}
+
 fn ensure_windows_overlay_transparency() {}
 
 #[derive(Clone)]
@@ -319,6 +372,10 @@ struct OverlayGeometry {
     pill_rects: Vec<PillRect>,
     pill_labels: Vec<String>,
     pill_font_sizes: Vec<f32>,
+    pill_alphas: Vec<f32>,
+    pill_scales: Vec<f32>,
+    pill_pulses: Vec<f32>,
+    pill_mouse_highlights: Vec<MouseHighlight>,
 }
 
 fn region_debug_bounds_enabled() -> bool {
@@ -329,6 +386,21 @@ fn region_debug_bounds_enabled() -> bool {
 fn mouse_debug_enabled() -> bool {
     static ENABLED: OnceLock<bool> = OnceLock::new();
     *ENABLED.get_or_init(|| env::var("MOUSE_DEBUG").is_ok_and(|v| v == "1"))
+}
+
+fn tray_debug_enabled() -> bool {
+    static ENABLED: OnceLock<bool> = OnceLock::new();
+    *ENABLED.get_or_init(|| env::var("OVERLAY_TRAY_DEBUG").is_ok_and(|v| v == "1"))
+}
+
+fn ease_out_cubic(t: f32) -> f32 {
+    let x = t.clamp(0.0, 1.0);
+    1.0 - (1.0 - x).powi(3)
+}
+
+fn ease_in_cubic(t: f32) -> f32 {
+    let x = t.clamp(0.0, 1.0);
+    x.powi(3)
 }
 
 fn paint_rect_stroke_inside(
@@ -351,6 +423,7 @@ struct App {
     status_msg: Option<(String, Instant)>,
     rx: Receiver<InputEvent>,
     input_state: InputState,
+    tray_state: OverlayTrayState,
     screen_size: [f32; 2],
     last_region_geometry: Option<OverlayGeometry>,
     last_hwnd: Option<OverlayHwnd>,
@@ -399,6 +472,7 @@ impl App {
             status_msg: None,
             rx,
             input_state: InputState::new(),
+            tray_state: OverlayTrayState::new(),
             screen_size: [1920.0, 1080.0],
             last_region_geometry: None,
             last_hwnd: None,
@@ -486,39 +560,168 @@ impl App {
         galley.size()
     }
 
+    fn upsert_tray_token(
+        &mut self,
+        id: TokenId,
+        label: String,
+        kind: TokenKind,
+        now: Instant,
+        hold_for: Duration,
+    ) {
+        if let Some(existing) = self.tray_state.tokens.iter_mut().find(|t| t.id == id) {
+            existing.bump_until = Some(now + Duration::from_millis(120));
+            existing.released_at = None;
+            existing.synthetic_release_at = now + hold_for;
+            existing.label = label;
+            return;
+        }
+
+        self.tray_state.tokens.push(TrayToken {
+            id,
+            label,
+            kind,
+            pressed_at: now,
+            released_at: None,
+            bump_until: None,
+            synthetic_release_at: now + hold_for,
+        });
+    }
+
+    fn tray_on_event(&mut self, event: &InputEvent, now: Instant) {
+        match event {
+            InputEvent::Key(e) => {
+                for part in e.display_string().split(" + ") {
+                    let label = part.to_lowercase();
+                    self.upsert_tray_token(
+                        TokenId::Key(label.clone()),
+                        label,
+                        TokenKind::Key,
+                        now,
+                        Duration::from_millis(220),
+                    );
+                }
+            }
+            InputEvent::MouseClick(e) => {
+                self.upsert_tray_token(
+                    TokenId::Mouse(e.button),
+                    MOUSE_ICON_TOKEN.to_owned(),
+                    TokenKind::Mouse,
+                    now,
+                    Duration::from_millis(180),
+                );
+            }
+            InputEvent::Scroll(_) => {}
+        }
+    }
+
+    fn build_render_tokens(&mut self, now: Instant) -> Vec<RenderToken> {
+        const ENTER_MS: u64 = 150;
+        const EXIT_MS: u64 = 120;
+
+        self.tray_state.tokens.retain_mut(|token| {
+            if token.released_at.is_none() && now >= token.synthetic_release_at {
+                token.released_at = Some(token.synthetic_release_at);
+            }
+
+            if let Some(released) = token.released_at {
+                now.duration_since(released) < Duration::from_millis(EXIT_MS)
+            } else {
+                true
+            }
+        });
+
+        let mut mouse_tokens: Vec<&TrayToken> = self
+            .tray_state
+            .tokens
+            .iter()
+            .filter(|t| t.kind == TokenKind::Mouse)
+            .collect();
+        let mut key_tokens: Vec<&TrayToken> = self
+            .tray_state
+            .tokens
+            .iter()
+            .filter(|t| t.kind == TokenKind::Key)
+            .collect();
+        mouse_tokens.sort_by_key(|t| t.pressed_at);
+        key_tokens.sort_by_key(|t| t.pressed_at);
+
+        mouse_tokens
+            .into_iter()
+            .chain(key_tokens)
+            .map(|token| {
+                let (alpha, scale) = if let Some(released) = token.released_at {
+                    let t = (now.duration_since(released).as_secs_f32() * 1000.0) / EXIT_MS as f32;
+                    let e = ease_in_cubic(t);
+                    (1.0 - e, 1.0 - 0.04 * e)
+                } else {
+                    let t = (now.duration_since(token.pressed_at).as_secs_f32() * 1000.0)
+                        / ENTER_MS as f32;
+                    let e = ease_out_cubic(t);
+                    (e, 0.92 + 0.08 * e)
+                };
+
+                let pulse = token
+                    .bump_until
+                    .and_then(|until| {
+                        if now <= until {
+                            let rem = (until - now).as_secs_f32() / 0.12;
+                            Some(rem.clamp(0.0, 1.0))
+                        } else {
+                            None
+                        }
+                    })
+                    .unwrap_or(0.0);
+
+                let mouse_highlight = match token.id {
+                    TokenId::Mouse(btn) => MouseHighlight::from_button(btn),
+                    _ => MouseHighlight::None,
+                };
+
+                RenderToken {
+                    label: token.label.clone(),
+                    is_mouse: token.kind == TokenKind::Mouse,
+                    mouse_highlight,
+                    alpha: alpha.clamp(0.0, 1.0),
+                    scale,
+                    pulse,
+                    font_size: if token.kind == TokenKind::Mouse {
+                        self.draft.font_size + 4.0
+                    } else {
+                        self.draft.font_size + LARGE_KEY_FONT_BOOST
+                    },
+                }
+            })
+            .collect()
+    }
+
     fn build_overlay_geometry(
-        &self,
+        &mut self,
         ctx: &egui::Context,
-        chord: Option<&str>,
-        mouse_icon_visible: bool,
-        mouse_label: Option<&str>,
+        tokens: &[RenderToken],
+        dt: f32,
     ) -> OverlayGeometry {
         let px_scale: f32 = ctx.pixels_per_point();
         let overlay_scale = self.draft.overlay_scale.clamp(0.6, 2.0);
         let scaled_px = |value: i32| ((value as f32) * overlay_scale).round() as i32;
 
-        let chord_font: f32 = (self.draft.font_size + LARGE_KEY_FONT_BOOST) * overlay_scale;
-        let event_font: f32 = (self.draft.font_size + 4.0) * overlay_scale;
-
-        let mut labels: Vec<(String, f32)> = Vec::new();
-        if mouse_icon_visible {
-            labels.push((MOUSE_ICON_TOKEN.to_owned(), event_font));
-        }
-        if let Some(chord) = chord {
-            labels.extend(chord.split(" + ").map(|part| (part.to_owned(), chord_font)));
-        }
-        if let Some(label) = mouse_label {
-            labels.push((label.to_owned(), event_font));
-        }
-
-        let pill_count = labels.len();
+        let pill_count = tokens.len();
         let mut pill_rects = Vec::with_capacity(pill_count);
         let mut pill_labels = Vec::with_capacity(pill_count);
         let mut pill_font_sizes = Vec::with_capacity(pill_count);
+        let mut pill_alphas = Vec::with_capacity(pill_count);
+        let mut pill_scales = Vec::with_capacity(pill_count);
+        let mut pill_pulses = Vec::with_capacity(pill_count);
+        let mut pill_mouse_highlights = Vec::with_capacity(pill_count);
         let mut x_px = 0;
         let mut content_h_px = 0;
 
-        for (idx, (label, font_points)) in labels.into_iter().enumerate() {
+        for (idx, token) in tokens.iter().enumerate() {
+            let label = if token.is_mouse {
+                MOUSE_ICON_TOKEN.to_owned()
+            } else {
+                token.label.clone()
+            };
+            let font_points = token.font_size * overlay_scale;
             let text_size = Self::measure_text(ctx, &label, font_points);
             let (text_w_px, text_h_px) = if label == MOUSE_ICON_TOKEN {
                 (
@@ -543,6 +746,10 @@ impl App {
             });
             pill_labels.push(label);
             pill_font_sizes.push(font_points);
+            pill_alphas.push(token.alpha);
+            pill_scales.push(token.scale);
+            pill_pulses.push(token.pulse);
+            pill_mouse_highlights.push(token.mouse_highlight);
 
             x_px += pill_w;
             if idx + 1 < pill_count {
@@ -562,6 +769,10 @@ impl App {
                 pill_rects,
                 pill_labels,
                 pill_font_sizes,
+                pill_alphas,
+                pill_scales,
+                pill_pulses,
+                pill_mouse_highlights,
             };
         }
 
@@ -576,14 +787,43 @@ impl App {
             rect.y = content_origin_y + (content_h_px - rect.h) / 2;
         }
 
+        let desired_w = tray_w as f32 / px_scale;
+        let desired_h = tray_h as f32 / px_scale;
+        self.tray_state.desired_size = egui::vec2(desired_w, desired_h);
+        if self.tray_state.current_size.x <= 0.0 || self.tray_state.current_size.y <= 0.0 {
+            self.tray_state.current_size = self.tray_state.desired_size;
+        } else {
+            let k = 20.0;
+            let factor = 1.0 - (-k * dt.max(0.0)).exp();
+            self.tray_state.current_size.x +=
+                (self.tray_state.desired_size.x - self.tray_state.current_size.x) * factor;
+            self.tray_state.current_size.y +=
+                (self.tray_state.desired_size.y - self.tray_state.current_size.y) * factor;
+        }
+
+        if tray_debug_enabled() {
+            let labels: Vec<&str> = tokens.iter().map(|t| t.label.as_str()).collect();
+            eprintln!(
+                "[overlay-tray] tokens={labels:?} desired=({:.1},{:.1}) current=({:.1},{:.1})",
+                self.tray_state.desired_size.x,
+                self.tray_state.desired_size.y,
+                self.tray_state.current_size.x,
+                self.tray_state.current_size.y,
+            );
+        }
+
         OverlayGeometry {
             width_px: tray_w,
             height_px: tray_h,
-            width_points: tray_w as f32 / px_scale,
-            height_points: tray_h as f32 / px_scale,
+            width_points: self.tray_state.current_size.x,
+            height_points: self.tray_state.current_size.y,
             pill_rects,
             pill_labels,
             pill_font_sizes,
+            pill_alphas,
+            pill_scales,
+            pill_pulses,
+            pill_mouse_highlights,
         }
     }
 
@@ -745,6 +985,8 @@ impl eframe::App for App {
                 ));
                 self.first_input_logged = true;
             }
+            let now = Instant::now();
+            self.tray_on_event(&event, now);
             self.input_state.apply_event(event);
         }
 
@@ -772,6 +1014,7 @@ impl eframe::App for App {
 
         if self.draft.overlay_enabled {
             let now = Instant::now();
+            let dt = 1.0 / 60.0;
             let overlay_hold_for = Duration::from_secs_f32(
                 (self.draft.display_duration_secs + self.draft.fade_duration_secs).max(0.1),
             );
@@ -797,19 +1040,7 @@ impl eframe::App for App {
             {
                 overlay_visible = true;
             }
-            let mouse_icon_visible = self.draft.show_mouse_icon
-                && self.input_state.mouse_icon_visible(now, mouse_hold_for);
-            let chord =
-                self.input_state
-                    .chord_for_display(now, overlay_hold_for, self.draft.show_keyboard);
-            let mouse_label = self.input_state.mouse_label_for_display(
-                now,
-                mouse_hold_for,
-                self.draft.show_mouse_clicks,
-                self.draft.show_mouse_event_text,
-                self.draft.show_scroll,
-            );
-            let mouse_highlight = self.input_state.mouse_highlight(now, mouse_hold_for);
+            let render_tokens = self.build_render_tokens(now);
             let scroll_arrow = self.input_state.scroll_arrow_for_display(
                 now,
                 display_duration,
@@ -819,19 +1050,13 @@ impl eframe::App for App {
             );
 
             let cfg = self.draft.clone();
-            let visible_mouse_label = mouse_label.as_deref();
-            let geometry = self.build_overlay_geometry(
-                ctx,
-                chord.as_deref(),
-                mouse_icon_visible,
-                visible_mouse_label,
-            );
+            let geometry = self.build_overlay_geometry(ctx, &render_tokens, dt);
 
             let computed_win_pos = self.compute_overlay_position(
                 [geometry.width_points, geometry.height_points],
                 self.screen_size,
             );
-            let win_pos = if self.startup_experiment
+            let mut win_pos = if self.startup_experiment
                 == overlay_startup_diagnostics::OverlayExperiment::NoAutoPosition
             {
                 if self.fixed_experiment_pos.is_none() {
@@ -844,6 +1069,17 @@ impl eframe::App for App {
             } else {
                 computed_win_pos
             };
+
+            if should_show_overlay {
+                if self.tray_state.left_anchor.is_none() {
+                    self.tray_state.left_anchor = Some(win_pos);
+                }
+                if let Some(anchor) = self.tray_state.left_anchor {
+                    win_pos = anchor;
+                }
+            } else {
+                self.tray_state.left_anchor = None;
+            }
             let overlay_id = egui::ViewportId::from_hash_of("overlay");
             let overlay_title = overlay_viewport_title();
             // Default to hide-until-ready on first activation to avoid user-visible
@@ -895,6 +1131,12 @@ impl eframe::App for App {
                         egui::ViewportCommand::InnerSize(requested_inner),
                     );
                     self.last_sent_inner_size = Some(requested_inner);
+                    if tray_debug_enabled() {
+                        eprintln!(
+                            "[overlay-tray] resize inner=({:.1},{:.1})",
+                            requested_inner.x, requested_inner.y
+                        );
+                    }
                 }
                 if self.last_sent_outer_pos != Some(win_pos) {
                     ctx.send_viewport_cmd_to(
@@ -902,6 +1144,12 @@ impl eframe::App for App {
                         egui::ViewportCommand::OuterPosition(win_pos),
                     );
                     self.last_sent_outer_pos = Some(win_pos);
+                    if tray_debug_enabled() {
+                        eprintln!(
+                            "[overlay-tray] move x={:.1} y={:.1} w={:.1} h={:.1}",
+                            win_pos.x, win_pos.y, requested_inner.x, requested_inner.y
+                        );
+                    }
                 }
                 overlay_startup_diagnostics::log_event(format!(
                     "startup geometry size_pt={:.1}x{:.1} size_px={}x{} pos=({:.1},{:.1})",
@@ -1052,13 +1300,24 @@ impl eframe::App for App {
                                 let pill_fill = egui::Color32::from_rgb(122, 71, 255);
                                 let pill_text = egui::Color32::WHITE;
 
-                                for ((rect, label), font_size) in geometry
+                                for (
+                                    ((((rect, label), font_size), alpha), (scale, pulse)),
+                                    mouse_hl,
+                                ) in geometry
                                     .pill_rects
                                     .iter()
                                     .zip(geometry.pill_labels.iter())
                                     .zip(geometry.pill_font_sizes.iter())
+                                    .zip(geometry.pill_alphas.iter())
+                                    .zip(
+                                        geometry
+                                            .pill_scales
+                                            .iter()
+                                            .zip(geometry.pill_pulses.iter()),
+                                    )
+                                    .zip(geometry.pill_mouse_highlights.iter())
                                 {
-                                    let pill_rect = egui::Rect::from_min_size(
+                                    let base_rect = egui::Rect::from_min_size(
                                         egui::pos2(
                                             rect.x as f32 / px_scale,
                                             rect.y as f32 / px_scale,
@@ -1068,15 +1327,27 @@ impl eframe::App for App {
                                             rect.h as f32 / px_scale,
                                         ),
                                     );
+                                    let pill_rect = egui::Rect::from_center_size(
+                                        base_rect.center(),
+                                        base_rect.size() * *scale,
+                                    );
                                     let rounding =
                                         egui::Rounding::same(rect.radius as f32 / px_scale);
-                                    ui.painter().rect_filled(pill_rect, rounding, pill_fill);
+                                    let brighten = (*pulse * 40.0).round() as u8;
+                                    let pulse_fill = egui::Color32::from_rgb(
+                                        pill_fill.r().saturating_add(brighten),
+                                        pill_fill.g().saturating_add(brighten),
+                                        pill_fill.b().saturating_add(brighten),
+                                    );
+                                    let fill = pulse_fill.linear_multiply(*alpha);
+                                    let text_color = pill_text.linear_multiply(*alpha);
+                                    ui.painter().rect_filled(pill_rect, rounding, fill);
                                     if label == MOUSE_ICON_TOKEN {
                                         draw_mouse_icon(
                                             ui.painter(),
                                             pill_rect,
-                                            mouse_highlight,
-                                            1.0,
+                                            *mouse_hl,
+                                            *alpha,
                                             scroll_arrow,
                                             &palette,
                                         );
@@ -1086,7 +1357,7 @@ impl eframe::App for App {
                                             egui::Align2::CENTER_CENTER,
                                             label,
                                             egui::FontId::proportional(*font_size),
-                                            pill_text,
+                                            text_color,
                                         );
                                     }
                                 }
