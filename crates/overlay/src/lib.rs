@@ -1,4 +1,5 @@
 mod mouse_icon;
+mod overlay_startup_diagnostics;
 mod settings_window;
 mod theme;
 mod win_region;
@@ -13,11 +14,12 @@ use anyhow::Result;
 use eframe::egui;
 use eframe::epaint::Rgba;
 use keyoverlay_core::{AppConfig, OverlayPosition, SharedConfig};
-use keyoverlay_input::{InputEvent, Key, MouseButton, ScrollDirection};
+use keyoverlay_input::{InputEvent, Key, Modifiers, MouseButton, ScrollDirection};
 use mouse_icon::{draw_mouse_icon, MouseHighlight, ScrollArrowDirection};
 
 use win_region::{
-    apply_test_region, apply_tray_region, disable_dwm_transitions, OverlayHwnd, PillRect,
+    apply_test_region, apply_tray_region, apply_tray_region_with_redraw, disable_dwm_transitions,
+    find_hwnd_by_title, force_redraw, snapshot_hwnd_state, OverlayHwnd, PillRect,
 };
 
 const OVERLAY_VIEWPORT_TITLE: &str = "KeyOverlayOverlay";
@@ -97,79 +99,49 @@ impl InputState {
 
         if mouse_debug_enabled() {
             match &event {
-                InputEvent::MouseDown(e) => {
-                    eprintln!("[mouse-debug] down button={} t={now:?}", e.button)
+                InputEvent::MouseClick(e) => {
+                    eprintln!("[mouse-debug] click button={} t={now:?}", e.button)
                 }
-                InputEvent::MouseUp(e) => {
-                    eprintln!("[mouse-debug] up button={} t={now:?}", e.button)
-                }
-                InputEvent::MouseWheel(e) => {
+                InputEvent::Scroll(e) => {
                     eprintln!("[mouse-debug] wheel dir={} t={now:?}", e.direction)
                 }
-                InputEvent::MouseMove(_) => eprintln!("[mouse-debug] move t={now:?}"),
                 _ => {}
             }
         }
 
         match event {
-            InputEvent::KeyDown(e) => {
-                let was_empty = self.pressed_keys.is_empty();
+            InputEvent::Key(e) => {
+                self.pressed_keys.clear();
+                if e.modifiers.contains(Modifiers::CTRL) {
+                    self.pressed_keys.insert(Key::Ctrl);
+                }
+                if e.modifiers.contains(Modifiers::SHIFT) {
+                    self.pressed_keys.insert(Key::Shift);
+                }
+                if e.modifiers.contains(Modifiers::ALT) {
+                    self.pressed_keys.insert(Key::Alt);
+                }
+                if e.modifiers.contains(Modifiers::WIN) {
+                    self.pressed_keys.insert(Key::Win);
+                }
                 self.pressed_keys.insert(e.key);
-                if was_empty {
-                    self.key_sequence_started_at = now;
-                }
-                self.display_chord = self.chord_from_pressed_keys();
+                self.key_sequence_started_at = now;
+                self.display_chord = self
+                    .chord_from_pressed_keys()
+                    .or_else(|| Some(e.display_string()));
             }
-            InputEvent::KeyUp(e) => {
-                self.pressed_keys.remove(&e.key);
-                if self.display_chord.is_none() {
-                    self.display_chord = self.chord_from_pressed_keys();
-                }
-            }
-            InputEvent::MouseDown(e) => {
-                self.pressed_mouse_buttons.insert(e.button);
-                self.mouse_label = None;
+            InputEvent::MouseClick(e) => {
+                self.pressed_mouse_buttons.clear();
                 self.last_mouse_activity = now;
                 self.mouse_icon_active = true;
                 self.last_mouse_highlight = MouseHighlight::from_button(e.button);
-
-                if e.button == MouseButton::Left {
-                    self.pending_left_press_at = Some(now);
-                    self.pending_left_press_moved = false;
-                } else {
-                    self.last_mouse_was_scroll = false;
-                    self.mouse_label = Some(format!("{} Click", e.button));
-                }
+                self.last_mouse_was_scroll = false;
+                self.mouse_label = Some(format!("{} Click", e.button));
+                self.pending_left_press_at = None;
+                self.pending_left_press_moved = false;
             }
-            InputEvent::MouseUp(e) => {
-                self.pressed_mouse_buttons.remove(&e.button);
-                self.last_mouse_activity = now;
-                self.mouse_icon_active = true;
-                self.last_mouse_highlight = MouseHighlight::from_button(e.button);
-
-                if e.button == MouseButton::Left {
-                    if let Some(press_at) = self.pending_left_press_at {
-                        if !self.pending_left_press_moved
-                            && now.duration_since(press_at) <= Duration::from_millis(250)
-                        {
-                            self.last_mouse_was_scroll = false;
-                            self.mouse_label = Some("Left Click".to_string());
-                        } else {
-                            self.last_mouse_was_scroll = false;
-                            self.mouse_label = None;
-                        }
-                    } else {
-                        self.last_mouse_was_scroll = false;
-                        self.mouse_label = None;
-                    }
-                    self.pending_left_press_at = None;
-                    self.pending_left_press_moved = false;
-                } else {
-                    self.last_mouse_was_scroll = false;
-                    self.mouse_label = Some(format!("{} Click", e.button));
-                }
-            }
-            InputEvent::MouseWheel(e) => {
+            InputEvent::Scroll(e) => {
+                self.pressed_mouse_buttons.clear();
                 self.last_mouse_activity = now;
                 self.mouse_icon_active = true;
                 self.last_mouse_highlight = MouseHighlight::None;
@@ -183,27 +155,19 @@ impl InputState {
                     last_event: now,
                 });
             }
-            InputEvent::MouseMove(_) => {
-                if self.pending_left_press_at.is_some() {
-                    self.pending_left_press_moved = true;
-                }
-            }
         }
     }
 
-    fn tick(&mut self, now: Instant, mouse_hold_for: Duration) {
+    fn tick(&mut self, now: Instant, mouse_hold_for: Duration, keyboard_hold_for: Duration) {
         if !self.mouse_icon_visible(now, mouse_hold_for) {
             self.last_mouse_highlight = MouseHighlight::None;
             self.scroll_highlight = None;
         }
 
-        if let Some(press_at) = self.pending_left_press_at {
-            if now.duration_since(press_at) > Duration::from_millis(250) {
-                self.pending_left_press_at = None;
-                self.pending_left_press_moved = false;
-                self.pressed_mouse_buttons.remove(&MouseButton::Left);
-            }
+        if now.duration_since(self.key_sequence_started_at) >= keyboard_hold_for {
+            self.pressed_keys.clear();
         }
+        self.pressed_mouse_buttons.clear();
     }
 
     fn overlay_visible(
@@ -387,6 +351,15 @@ struct App {
     manual_preview_until: Option<Instant>,
     /// True until the first update frame has drained buffered startup events.
     startup_drain: bool,
+    startup_experiment: overlay_startup_diagnostics::OverlayExperiment,
+    startup_delay_until: Option<Instant>,
+    startup_region_prepared: bool,
+    first_frame_logged: bool,
+    first_input_logged: bool,
+    title_logged: bool,
+    viewport_config_logged: bool,
+    last_overlay_visible: bool,
+    fixed_experiment_pos: Option<egui::Pos2>,
 }
 
 impl App {
@@ -419,6 +392,15 @@ impl App {
             transitions_disabled: false,
             manual_preview_until: None,
             startup_drain: true,
+            startup_experiment: overlay_startup_diagnostics::OverlayExperiment::from_env(),
+            startup_delay_until: None,
+            startup_region_prepared: false,
+            first_frame_logged: false,
+            first_input_logged: false,
+            title_logged: false,
+            viewport_config_logged: false,
+            last_overlay_visible: false,
+            fixed_experiment_pos: None,
         }
     }
 
@@ -585,47 +567,107 @@ impl App {
         }
     }
 
-    fn maybe_apply_window_region(&mut self, geometry: &OverlayGeometry) {
+    fn maybe_apply_window_region(&mut self, geometry: &OverlayGeometry, currently_visible: bool) {
+        let now = Instant::now();
+
+        if self.startup_experiment == overlay_startup_diagnostics::OverlayExperiment::DelayRegion {
+            let until = self
+                .startup_delay_until
+                .get_or_insert_with(|| now + Duration::from_millis(200));
+            if now < *until {
+                overlay_startup_diagnostics::log_event(
+                    "experiment C: delaying SetWindowRgn for 200ms",
+                );
+                return;
+            }
+        }
+
+        if self.startup_experiment == overlay_startup_diagnostics::OverlayExperiment::NoRegion {
+            overlay_startup_diagnostics::log_event("experiment E: skipping SetWindowRgn");
+            return;
+        }
+
         if self.last_region_geometry.as_ref() == Some(geometry) {
             return;
         }
 
         let width = geometry.width_px;
         let height = geometry.height_px;
+        let redraw = self.startup_experiment
+            != overlay_startup_diagnostics::OverlayExperiment::RegionNoRedraw;
 
         let hwnd = if !self.region_test_applied {
             let hwnd = apply_test_region(OVERLAY_VIEWPORT_TITLE);
             self.region_test_applied = true;
             hwnd
-        } else {
+        } else if redraw {
             apply_tray_region(
                 OVERLAY_VIEWPORT_TITLE,
                 width,
                 height,
                 ((TRAY_RADIUS as f32) * self.draft.overlay_scale.clamp(0.6, 2.0)).round() as i32,
             )
+        } else {
+            apply_tray_region_with_redraw(
+                OVERLAY_VIEWPORT_TITLE,
+                width,
+                height,
+                ((TRAY_RADIUS as f32) * self.draft.overlay_scale.clamp(0.6, 2.0)).round() as i32,
+                false,
+            )
         };
 
         if let Some(hwnd_val) = hwnd {
+            overlay_startup_diagnostics::log_event(format!(
+                "region apply path hwnd={hwnd_val:?} currently_visible={currently_visible}"
+            ));
+            snapshot_hwnd_state(hwnd_val, "after-region-apply");
+
             if let Some(last) = self.last_hwnd {
                 if last != hwnd_val {
                     eprintln!("[overlay-region] HWND changed old={last:?} new={hwnd_val:?}");
                     self.transitions_disabled = false;
+                    overlay_startup_diagnostics::log_event(
+                        "HWND changed; transitions_disabled reset",
+                    );
                 }
             }
 
-            if !self.transitions_disabled {
+            let skip_dwm = self.startup_experiment
+                == overlay_startup_diagnostics::OverlayExperiment::NoDwmDisable;
+            if !self.transitions_disabled && !skip_dwm {
                 if let Err(err) = disable_dwm_transitions(hwnd_val) {
                     eprintln!("[overlay-region] failed to disable DWM transitions: {err}");
                 } else {
                     self.transitions_disabled = true;
                 }
+            } else if skip_dwm {
+                overlay_startup_diagnostics::log_event(
+                    "experiment F: skipping DwmSetWindowAttribute",
+                );
+            }
+
+            if !redraw {
+                force_redraw(hwnd_val);
             }
 
             self.last_hwnd = Some(hwnd_val);
+            self.startup_region_prepared = true;
+        } else {
+            overlay_startup_diagnostics::log_event("FindWindowW did not return overlay HWND yet");
         }
 
         self.last_region_geometry = Some(geometry.clone());
+    }
+
+    fn maybe_log_hwnd_state(&mut self) {
+        if self.last_hwnd.is_none() {
+            self.last_hwnd = find_hwnd_by_title(OVERLAY_VIEWPORT_TITLE);
+        }
+
+        if let Some(hwnd) = self.last_hwnd {
+            snapshot_hwnd_state(hwnd, "frame-snapshot");
+        }
     }
 }
 
@@ -635,6 +677,11 @@ impl eframe::App for App {
     }
 
     fn update(&mut self, ctx: &egui::Context, _frame: &mut eframe::Frame) {
+        if !self.first_frame_logged {
+            overlay_startup_diagnostics::log_event("first update/frame");
+            self.first_frame_logged = true;
+        }
+
         if self.startup_drain {
             // Discard any events that buffered while eframe/wgpu was
             // initialising so they don't cause a freeze or phantom state.
@@ -644,12 +691,31 @@ impl eframe::App for App {
         }
 
         while let Ok(event) = self.rx.try_recv() {
+            if !self.first_input_logged {
+                overlay_startup_diagnostics::log_event(format!(
+                    "first input event received: {event:?}"
+                ));
+                self.first_input_logged = true;
+            }
             self.input_state.apply_event(event);
         }
 
         *self.config.lock().unwrap() = self.draft.clone();
 
         let screen_rect = ctx.input(|i| i.screen_rect());
+        overlay_startup_diagnostics::log_event(format!(
+            "frame input screen_rect={}x{} px_per_point={:.3}",
+            screen_rect.width(),
+            screen_rect.height(),
+            ctx.pixels_per_point()
+        ));
+        if overlay_startup_diagnostics::enabled() {
+            ctx.input(|i| {
+                for ev in &i.events {
+                    overlay_startup_diagnostics::log_event(format!("egui event: {ev:?}"));
+                }
+            });
+        }
         if screen_rect.width() > 100.0 && screen_rect.height() > 100.0 {
             self.screen_size = [screen_rect.width(), screen_rect.height()];
         }
@@ -669,7 +735,7 @@ impl eframe::App for App {
                 || self.draft.show_scroll
                 || self.draft.show_mouse_icon;
 
-            self.input_state.tick(now, mouse_hold_for);
+            self.input_state.tick(now, mouse_hold_for, overlay_hold_for);
 
             let mut overlay_visible = self.input_state.overlay_visible(
                 now,
@@ -713,13 +779,59 @@ impl eframe::App for App {
                 visible_mouse_label,
             );
 
-            let win_pos = self.compute_overlay_position(
+            let computed_win_pos = self.compute_overlay_position(
                 [geometry.width_points, geometry.height_points],
                 self.screen_size,
             );
+            let win_pos = if self.startup_experiment
+                == overlay_startup_diagnostics::OverlayExperiment::NoAutoPosition
+            {
+                if self.fixed_experiment_pos.is_none() {
+                    overlay_startup_diagnostics::log_event(
+                        "experiment no_autoposition: freezing initial overlay position",
+                    );
+                    self.fixed_experiment_pos = Some(computed_win_pos);
+                }
+                self.fixed_experiment_pos.unwrap_or(computed_win_pos)
+            } else {
+                computed_win_pos
+            };
             let overlay_id = egui::ViewportId::from_hash_of("overlay");
+            let startup_hidden_mode = self.startup_experiment
+                == overlay_startup_diagnostics::OverlayExperiment::HiddenUntilReady;
+            let should_show_overlay = overlay_visible;
 
-            if !overlay_visible {
+            if self.startup_experiment
+                == overlay_startup_diagnostics::OverlayExperiment::EarlyDwmDisable
+                && !self.transitions_disabled
+            {
+                if let Some(hwnd) = find_hwnd_by_title(OVERLAY_VIEWPORT_TITLE) {
+                    overlay_startup_diagnostics::log_event(
+                        "experiment A: disable DWM transitions as soon as HWND exists",
+                    );
+                    if disable_dwm_transitions(hwnd).is_ok() {
+                        self.transitions_disabled = true;
+                        self.last_hwnd = Some(hwnd);
+                    }
+                }
+            }
+
+            let overlay_visible = if startup_hidden_mode {
+                should_show_overlay && self.startup_region_prepared
+            } else {
+                should_show_overlay
+            };
+
+            if self.last_overlay_visible != overlay_visible {
+                overlay_startup_diagnostics::log_event(format!(
+                    "visibility toggle {} -> {} (requested={should_show_overlay})",
+                    self.last_overlay_visible, overlay_visible
+                ));
+                self.last_overlay_visible = overlay_visible;
+            }
+
+            if !should_show_overlay {
+                overlay_startup_diagnostics::log_event("Hide requested (overlay not active)");
                 ctx.send_viewport_cmd_to(overlay_id, egui::ViewportCommand::Close);
                 self.last_region_geometry = None;
             } else {
@@ -731,12 +843,63 @@ impl eframe::App for App {
                     )),
                 );
                 ctx.send_viewport_cmd_to(overlay_id, egui::ViewportCommand::OuterPosition(win_pos));
+                overlay_startup_diagnostics::log_event(format!(
+                    "startup geometry size_pt={:.1}x{:.1} size_px={}x{} pos=({:.1},{:.1})",
+                    geometry.width_points,
+                    geometry.height_points,
+                    geometry.width_px,
+                    geometry.height_px,
+                    win_pos.x,
+                    win_pos.y
+                ));
                 // Resize/reposition first, then apply region in window-local coordinates.
-                self.maybe_apply_window_region(&geometry);
-                ctx.send_viewport_cmd_to(overlay_id, egui::ViewportCommand::Visible(true));
+                self.maybe_apply_window_region(&geometry, overlay_visible);
+
+                if self.startup_experiment
+                    == overlay_startup_diagnostics::OverlayExperiment::HiddenUntilReady
+                    && !self.startup_region_prepared
+                {
+                    overlay_startup_diagnostics::log_event(
+                        "experiment D: keep hidden until region prepared",
+                    );
+                    overlay_startup_diagnostics::log_event("Hide requested (hidden_until_ready)");
+                    ctx.send_viewport_cmd_to(overlay_id, egui::ViewportCommand::Visible(false));
+                } else {
+                    overlay_startup_diagnostics::log_event("Show requested");
+                    ctx.send_viewport_cmd_to(
+                        overlay_id,
+                        egui::ViewportCommand::Visible(overlay_visible),
+                    );
+                }
+
+                if overlay_startup_diagnostics::enabled() {
+                    self.maybe_log_hwnd_state();
+                }
             }
 
-            if overlay_visible {
+            if should_show_overlay {
+                let transparent = if self.startup_experiment
+                    == overlay_startup_diagnostics::OverlayExperiment::NoTransparencyUntilReady
+                {
+                    self.startup_region_prepared
+                } else {
+                    true
+                };
+
+                if !self.viewport_config_logged {
+                    overlay_startup_diagnostics::log_event(format!(
+                        "viewport config title={OVERLAY_VIEWPORT_TITLE} decorations=false transparent={transparent} always_on_top=true"
+                    ));
+                    self.viewport_config_logged = true;
+                }
+
+                if !self.title_logged {
+                    overlay_startup_diagnostics::log_event(
+                        "overlay title assigned in ViewportBuilder",
+                    );
+                    self.title_logged = true;
+                }
+
                 ctx.show_viewport_immediate(
                     overlay_id,
                     egui::ViewportBuilder::default()
@@ -749,7 +912,7 @@ impl eframe::App for App {
                         .with_taskbar(false)
                         .with_always_on_top()
                         .with_resizable(false)
-                        .with_transparent(true)
+                        .with_transparent(transparent)
                         .with_mouse_passthrough(true),
                     move |ctx, _class| {
                         ensure_windows_overlay_transparency();
@@ -868,6 +1031,11 @@ pub fn run(
     config: SharedConfig,
     app_icon: Option<egui::IconData>,
 ) -> Result<()> {
+    overlay_startup_diagnostics::log_event(format!(
+        "overlay diagnostics enabled; experiment={:?}",
+        overlay_startup_diagnostics::OverlayExperiment::from_env()
+    ));
+
     let viewport = if let Some(app_icon) = app_icon {
         egui::ViewportBuilder::default()
             .with_inner_size([520.0, 600.0])
