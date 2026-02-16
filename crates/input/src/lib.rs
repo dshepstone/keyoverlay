@@ -309,6 +309,7 @@ impl InputEvent {
 pub struct KeyEvent {
     pub key: Key,
     pub modifiers: Modifiers,
+    pub is_down: bool,
     pub timestamp: Instant,
 }
 
@@ -317,14 +318,30 @@ impl KeyEvent {
         Self {
             key,
             modifiers,
+            is_down: true,
             timestamp: Instant::now(),
         }
     }
 
-    pub fn with_timestamp(key: Key, modifiers: Modifiers, timestamp: Instant) -> Self {
+    pub fn new_released(key: Key, modifiers: Modifiers) -> Self {
         Self {
             key,
             modifiers,
+            is_down: false,
+            timestamp: Instant::now(),
+        }
+    }
+
+    pub fn with_timestamp(
+        key: Key,
+        modifiers: Modifiers,
+        is_down: bool,
+        timestamp: Instant,
+    ) -> Self {
+        Self {
+            key,
+            modifiers,
+            is_down,
             timestamp,
         }
     }
@@ -343,6 +360,7 @@ impl KeyEvent {
 #[derive(Debug, Copy, Clone, Eq, PartialEq, Hash)]
 pub struct MouseClickEvent {
     pub button: MouseButton,
+    pub is_down: bool,
     pub timestamp: Instant,
 }
 
@@ -350,6 +368,15 @@ impl MouseClickEvent {
     pub fn new(button: MouseButton) -> Self {
         Self {
             button,
+            is_down: true,
+            timestamp: Instant::now(),
+        }
+    }
+
+    pub fn new_released(button: MouseButton) -> Self {
+        Self {
+            button,
+            is_down: false,
             timestamp: Instant::now(),
         }
     }
@@ -466,19 +493,40 @@ fn rdev_key_to_key(rkey: rdev::Key) -> Option<Key> {
     Some(key)
 }
 
-/// Returns true if this key is a modifier key (should not produce a standalone event
-/// unless pressed alone).
+/// Returns true if this key is a modifier key.
 fn is_modifier_key(key: Key) -> bool {
     matches!(key, Key::Shift | Key::Ctrl | Key::Alt | Key::Win)
 }
 
+fn modifier_flag(key: Key) -> Option<Modifiers> {
+    match key {
+        Key::Shift => Some(Modifiers::SHIFT),
+        Key::Ctrl => Some(Modifiers::CTRL),
+        Key::Alt => Some(Modifiers::ALT),
+        Key::Win => Some(Modifiers::WIN),
+        _ => None,
+    }
+}
+
 /// Track currently held modifier state.
-#[derive(Default)]
 struct ModifierState {
     shift: bool,
     ctrl: bool,
     alt: bool,
     win: bool,
+    used_as_modifier: Modifiers,
+}
+
+impl Default for ModifierState {
+    fn default() -> Self {
+        Self {
+            shift: false,
+            ctrl: false,
+            alt: false,
+            win: false,
+            used_as_modifier: Modifiers::empty(),
+        }
+    }
 }
 
 impl ModifierState {
@@ -497,6 +545,16 @@ impl ModifierState {
             m |= Modifiers::WIN;
         }
         m
+    }
+
+    fn mark_active_modifiers_used(&mut self) {
+        self.used_as_modifier |= self.as_modifiers();
+    }
+
+    fn clear_modifier_used(&mut self, key: Key) {
+        if let Some(flag) = modifier_flag(key) {
+            self.used_as_modifier.remove(flag);
+        }
     }
 
     fn press(&mut self, key: Key) {
@@ -539,8 +597,17 @@ pub fn spawn_input_listener(tx: mpsc::Sender<InputEvent>) {
                     if let Some(key) = rdev_key_to_key(rkey) {
                         if is_modifier_key(key) {
                             state.press(key);
+                            let modifiers = state.as_modifiers();
+                            let mut clean_mods = modifiers;
+                            if let Some(flag) = modifier_flag(key) {
+                                clean_mods.remove(flag);
+                            }
+
+                            let ke = KeyEvent::new(key, clean_mods);
+                            let _ = tx.send(InputEvent::Key(ke));
                         } else {
                             let modifiers = state.as_modifiers();
+                            state.mark_active_modifiers_used();
                             let ke = KeyEvent::new(key, modifiers);
                             let _ = tx.send(InputEvent::Key(ke));
                         }
@@ -549,19 +616,15 @@ pub fn spawn_input_listener(tx: mpsc::Sender<InputEvent>) {
                 EventType::KeyRelease(rkey) => {
                     if let Some(key) = rdev_key_to_key(rkey) {
                         if is_modifier_key(key) {
-                            // If modifier was released without any other key in between,
-                            // emit it as a standalone key event.
-                            let modifiers = state.as_modifiers();
-                            // Remove this modifier from the reported modifiers
-                            let mut clean_mods = modifiers;
-                            match key {
-                                Key::Shift => clean_mods.remove(Modifiers::SHIFT),
-                                Key::Ctrl => clean_mods.remove(Modifiers::CTRL),
-                                Key::Alt => clean_mods.remove(Modifiers::ALT),
-                                Key::Win => clean_mods.remove(Modifiers::WIN),
-                                _ => {}
+                            let mut modifiers = state.as_modifiers();
+                            if let Some(flag) = modifier_flag(key) {
+                                modifiers.remove(flag);
                             }
+                            let _ =
+                                tx.send(InputEvent::Key(KeyEvent::new_released(key, modifiers)));
+
                             state.release(key);
+                            state.clear_modifier_used(key);
                         }
                     }
                 }
@@ -574,6 +637,17 @@ pub fn spawn_input_listener(tx: mpsc::Sender<InputEvent>) {
                     };
                     if let Some(b) = button {
                         let _ = tx.send(InputEvent::MouseClick(MouseClickEvent::new(b)));
+                    }
+                }
+                EventType::ButtonRelease(btn) => {
+                    let button = match btn {
+                        rdev::Button::Left => Some(MouseButton::Left),
+                        rdev::Button::Right => Some(MouseButton::Right),
+                        rdev::Button::Middle => Some(MouseButton::Middle),
+                        _ => None,
+                    };
+                    if let Some(b) = button {
+                        let _ = tx.send(InputEvent::MouseClick(MouseClickEvent::new_released(b)));
                     }
                 }
                 EventType::Wheel { delta_y, .. } => {
