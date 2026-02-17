@@ -1,9 +1,14 @@
 use std::fmt;
-use std::sync::mpsc;
+use std::sync::{mpsc, Arc, OnceLock};
 use std::thread;
 use std::time::Instant;
 
 use bitflags::bitflags;
+
+fn repaint_debug_enabled() -> bool {
+    static ENABLED: OnceLock<bool> = OnceLock::new();
+    *ENABLED.get_or_init(|| std::env::var("OVERLAY_REPAINT_DEBUG").is_ok_and(|v| v == "1"))
+}
 
 // ── Key Enum ────────────────────────────────────────────────────────────
 
@@ -280,21 +285,25 @@ impl fmt::Display for ScrollDirection {
 
 #[derive(Debug, Clone)]
 pub enum InputEvent {
-    KeyDown(KeyEvent),
-    KeyUp(KeyEvent),
-    MouseDown(MouseButtonEvent),
-    MouseUp(MouseButtonEvent),
-    MouseWheel(ScrollEvent),
-    MouseMove(MouseMoveEvent),
+    Key(KeyEvent),
+    MouseClick(MouseClickEvent),
+    Scroll(ScrollEvent),
 }
 
 impl InputEvent {
     pub fn timestamp(&self) -> Instant {
         match self {
-            InputEvent::KeyDown(e) | InputEvent::KeyUp(e) => e.timestamp,
-            InputEvent::MouseDown(e) | InputEvent::MouseUp(e) => e.timestamp,
-            InputEvent::MouseWheel(e) => e.timestamp,
-            InputEvent::MouseMove(e) => e.timestamp,
+            InputEvent::Key(e) => e.timestamp,
+            InputEvent::MouseClick(e) => e.timestamp,
+            InputEvent::Scroll(e) => e.timestamp,
+        }
+    }
+
+    pub fn display_string(&self) -> String {
+        match self {
+            InputEvent::Key(e) => e.display_string(),
+            InputEvent::MouseClick(e) => format!("{}", e.button),
+            InputEvent::Scroll(e) => format!("{}", e.direction),
         }
     }
 }
@@ -305,6 +314,7 @@ impl InputEvent {
 pub struct KeyEvent {
     pub key: Key,
     pub modifiers: Modifiers,
+    pub is_down: bool,
     pub timestamp: Instant,
 }
 
@@ -313,14 +323,30 @@ impl KeyEvent {
         Self {
             key,
             modifiers,
+            is_down: true,
             timestamp: Instant::now(),
         }
     }
 
-    pub fn with_timestamp(key: Key, modifiers: Modifiers, timestamp: Instant) -> Self {
+    pub fn new_released(key: Key, modifiers: Modifiers) -> Self {
         Self {
             key,
             modifiers,
+            is_down: false,
+            timestamp: Instant::now(),
+        }
+    }
+
+    pub fn with_timestamp(
+        key: Key,
+        modifiers: Modifiers,
+        is_down: bool,
+        timestamp: Instant,
+    ) -> Self {
+        Self {
+            key,
+            modifiers,
+            is_down,
             timestamp,
         }
     }
@@ -334,37 +360,28 @@ impl KeyEvent {
     }
 }
 
-// ── Mouse Button Event ───────────────────────────────────────────────────
+// ── Mouse Click Event ────────────────────────────────────────────────────
 
 #[derive(Debug, Copy, Clone, Eq, PartialEq, Hash)]
-pub struct MouseButtonEvent {
+pub struct MouseClickEvent {
     pub button: MouseButton,
+    pub is_down: bool,
     pub timestamp: Instant,
 }
 
-impl MouseButtonEvent {
+impl MouseClickEvent {
     pub fn new(button: MouseButton) -> Self {
         Self {
             button,
+            is_down: true,
             timestamp: Instant::now(),
         }
     }
-}
 
-// ── Mouse Move Event ─────────────────────────────────────────────────────
-
-#[derive(Debug, Copy, Clone)]
-pub struct MouseMoveEvent {
-    pub x: f64,
-    pub y: f64,
-    pub timestamp: Instant,
-}
-
-impl MouseMoveEvent {
-    pub fn new(x: f64, y: f64) -> Self {
+    pub fn new_released(button: MouseButton) -> Self {
         Self {
-            x,
-            y,
+            button,
+            is_down: false,
             timestamp: Instant::now(),
         }
     }
@@ -481,19 +498,40 @@ fn rdev_key_to_key(rkey: rdev::Key) -> Option<Key> {
     Some(key)
 }
 
-/// Returns true if this key is a modifier key (should not produce a standalone event
-/// unless pressed alone).
+/// Returns true if this key is a modifier key.
 fn is_modifier_key(key: Key) -> bool {
     matches!(key, Key::Shift | Key::Ctrl | Key::Alt | Key::Win)
 }
 
+fn modifier_flag(key: Key) -> Option<Modifiers> {
+    match key {
+        Key::Shift => Some(Modifiers::SHIFT),
+        Key::Ctrl => Some(Modifiers::CTRL),
+        Key::Alt => Some(Modifiers::ALT),
+        Key::Win => Some(Modifiers::WIN),
+        _ => None,
+    }
+}
+
 /// Track currently held modifier state.
-#[derive(Default)]
 struct ModifierState {
     shift: bool,
     ctrl: bool,
     alt: bool,
     win: bool,
+    used_as_modifier: Modifiers,
+}
+
+impl Default for ModifierState {
+    fn default() -> Self {
+        Self {
+            shift: false,
+            ctrl: false,
+            alt: false,
+            win: false,
+            used_as_modifier: Modifiers::empty(),
+        }
+    }
 }
 
 impl ModifierState {
@@ -512,6 +550,16 @@ impl ModifierState {
             m |= Modifiers::WIN;
         }
         m
+    }
+
+    fn mark_active_modifiers_used(&mut self) {
+        self.used_as_modifier |= self.as_modifiers();
+    }
+
+    fn clear_modifier_used(&mut self, key: Key) {
+        if let Some(flag) = modifier_flag(key) {
+            self.used_as_modifier.remove(flag);
+        }
     }
 
     fn press(&mut self, key: Key) {
@@ -538,6 +586,15 @@ impl ModifierState {
 /// Spawn a background thread that listens for real keyboard and mouse input
 /// and forwards events over the provided channel.
 pub fn spawn_input_listener(tx: mpsc::Sender<InputEvent>) {
+    spawn_input_listener_with_wakeup(tx, None);
+}
+
+/// Same as `spawn_input_listener`, but allows providing a repaint wake callback
+/// that is invoked after every enqueued input event.
+pub fn spawn_input_listener_with_wakeup(
+    tx: mpsc::Sender<InputEvent>,
+    wake_repaint: Option<Arc<dyn Fn() + Send + Sync>>,
+) {
     thread::spawn(move || {
         use rdev::{listen, Event, EventType};
         use std::sync::Mutex;
@@ -554,21 +611,57 @@ pub fn spawn_input_listener(tx: mpsc::Sender<InputEvent>) {
                     if let Some(key) = rdev_key_to_key(rkey) {
                         if is_modifier_key(key) {
                             state.press(key);
-                        }
+                            let modifiers = state.as_modifiers();
+                            let mut clean_mods = modifiers;
+                            if let Some(flag) = modifier_flag(key) {
+                                clean_mods.remove(flag);
+                            }
 
-                        let modifiers = state.as_modifiers();
-                        let ke = KeyEvent::new(key, modifiers);
-                        let _ = tx.send(InputEvent::KeyDown(ke));
+                            let ke = KeyEvent::new(key, clean_mods);
+                            if tx.send(InputEvent::Key(ke)).is_ok() {
+                                if let Some(wake) = &wake_repaint {
+                                    if repaint_debug_enabled() {
+                                        eprintln!("[overlay-repaint] enqueue key event t={:?} -> request_repaint", Instant::now());
+                                    }
+                                    wake();
+                                }
+                            }
+                        } else {
+                            let modifiers = state.as_modifiers();
+                            state.mark_active_modifiers_used();
+                            let ke = KeyEvent::new(key, modifiers);
+                            if tx.send(InputEvent::Key(ke)).is_ok() {
+                                if let Some(wake) = &wake_repaint {
+                                    if repaint_debug_enabled() {
+                                        eprintln!("[overlay-repaint] enqueue key event t={:?} -> request_repaint", Instant::now());
+                                    }
+                                    wake();
+                                }
+                            }
+                        }
                     }
                 }
                 EventType::KeyRelease(rkey) => {
                     if let Some(key) = rdev_key_to_key(rkey) {
-                        let modifiers = state.as_modifiers();
-                        let ke = KeyEvent::new(key, modifiers);
-                        let _ = tx.send(InputEvent::KeyUp(ke));
+                        let mut modifiers = state.as_modifiers();
+                        if let Some(flag) = modifier_flag(key) {
+                            modifiers.remove(flag);
+                        }
+                        if tx
+                            .send(InputEvent::Key(KeyEvent::new_released(key, modifiers)))
+                            .is_ok()
+                        {
+                            if let Some(wake) = &wake_repaint {
+                                if repaint_debug_enabled() {
+                                    eprintln!("[overlay-repaint] enqueue input event t={:?} -> request_repaint", Instant::now());
+                                }
+                                wake();
+                            }
+                        }
 
                         if is_modifier_key(key) {
                             state.release(key);
+                            state.clear_modifier_used(key);
                         }
                     }
                 }
@@ -580,7 +673,17 @@ pub fn spawn_input_listener(tx: mpsc::Sender<InputEvent>) {
                         _ => None,
                     };
                     if let Some(b) = button {
-                        let _ = tx.send(InputEvent::MouseDown(MouseButtonEvent::new(b)));
+                        if tx
+                            .send(InputEvent::MouseClick(MouseClickEvent::new(b)))
+                            .is_ok()
+                        {
+                            if let Some(wake) = &wake_repaint {
+                                if repaint_debug_enabled() {
+                                    eprintln!("[overlay-repaint] enqueue input event t={:?} -> request_repaint", Instant::now());
+                                }
+                                wake();
+                            }
+                        }
                     }
                 }
                 EventType::ButtonRelease(btn) => {
@@ -591,7 +694,17 @@ pub fn spawn_input_listener(tx: mpsc::Sender<InputEvent>) {
                         _ => None,
                     };
                     if let Some(b) = button {
-                        let _ = tx.send(InputEvent::MouseUp(MouseButtonEvent::new(b)));
+                        if tx
+                            .send(InputEvent::MouseClick(MouseClickEvent::new_released(b)))
+                            .is_ok()
+                        {
+                            if let Some(wake) = &wake_repaint {
+                                if repaint_debug_enabled() {
+                                    eprintln!("[overlay-repaint] enqueue input event t={:?} -> request_repaint", Instant::now());
+                                }
+                                wake();
+                            }
+                        }
                     }
                 }
                 EventType::Wheel { delta_y, .. } => {
@@ -602,11 +715,22 @@ pub fn spawn_input_listener(tx: mpsc::Sender<InputEvent>) {
                     } else {
                         return;
                     };
-                    let _ = tx.send(InputEvent::MouseWheel(ScrollEvent::new(direction)));
+                    if tx
+                        .send(InputEvent::Scroll(ScrollEvent::new(direction)))
+                        .is_ok()
+                    {
+                        if let Some(wake) = &wake_repaint {
+                            if repaint_debug_enabled() {
+                                eprintln!(
+                                    "[overlay-repaint] enqueue scroll event t={:?} -> request_repaint",
+                                    Instant::now()
+                                );
+                            }
+                            wake();
+                        }
+                    }
                 }
-                EventType::MouseMove { x, y } => {
-                    let _ = tx.send(InputEvent::MouseMove(MouseMoveEvent::new(x, y)));
-                }
+                _ => {}
             }
         };
 

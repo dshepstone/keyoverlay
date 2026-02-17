@@ -1,10 +1,10 @@
-use std::sync::mpsc;
+use std::sync::{mpsc, Arc};
 
 use anyhow::Result;
 use eframe::egui::IconData;
 use image::io::Reader as ImageReader;
 use keyoverlay_core::shared_config;
-use keyoverlay_input::spawn_input_listener;
+use keyoverlay_input::spawn_input_listener_with_wakeup;
 
 fn main() -> Result<()> {
     println!("KeyOverlay – starting...");
@@ -13,7 +13,8 @@ fn main() -> Result<()> {
     let (tx, rx) = mpsc::channel();
 
     // Spawn the global input listener (keyboard + mouse via rdev).
-    spawn_input_listener(tx);
+    let wake_repaint = Arc::new(|| keyoverlay_overlay::request_external_repaint());
+    spawn_input_listener_with_wakeup(tx, Some(wake_repaint));
 
     let app_icon = load_app_icon();
 
