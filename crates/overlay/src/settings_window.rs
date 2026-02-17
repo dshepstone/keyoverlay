@@ -1,3 +1,5 @@
+use std::collections::HashSet;
+
 use eframe::egui;
 use keyoverlay_core::{OverlayLayout, OverlayPosition, Theme};
 
@@ -22,7 +24,7 @@ const SCALE_PRESETS: &[(f32, &str)] = &[
 
 // ── Settings Tabs ────────────────────────────────────────────────────────
 
-#[derive(Clone, Copy, PartialEq, Eq)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum SettingsTab {
     Appearance,
     Behavior,
@@ -76,6 +78,60 @@ fn load_header_icon_texture(ctx: &egui::Context) -> Option<egui::TextureHandle> 
 
 // ── Draw settings in the main window ────────────────────────────────────
 
+fn command_press_memory_key() -> egui::Id {
+    egui::Id::new("overlay_command_pressed_ids")
+}
+
+fn reset_command_press_state_if_needed(ui: &egui::Ui) {
+    if !ui.input(|i| i.pointer.primary_down()) {
+        ui.ctx().data_mut(|data| {
+            data.insert_temp(command_press_memory_key(), HashSet::<egui::Id>::new())
+        });
+    }
+}
+
+fn command_activated_on_press(
+    ui: &egui::Ui,
+    button_id: egui::Id,
+    response: &egui::Response,
+) -> bool {
+    let pressed_now = response.hovered() && ui.input(|i| i.pointer.primary_pressed());
+    if pressed_now {
+        let should_fire = ui.ctx().data_mut(|data| {
+            let mut fired = data
+                .get_temp::<HashSet<egui::Id>>(command_press_memory_key())
+                .unwrap_or_default();
+            let fresh = fired.insert(button_id);
+            data.insert_temp(command_press_memory_key(), fired);
+            fresh
+        });
+        if should_fire {
+            return true;
+        }
+    }
+
+    if response.clicked() {
+        if response.clicked_by(egui::PointerButton::Primary) {
+            let was_press_fired = ui.ctx().data_mut(|data| {
+                let mut fired = data
+                    .get_temp::<HashSet<egui::Id>>(command_press_memory_key())
+                    .unwrap_or_default();
+                let had = fired.remove(&button_id);
+                data.insert_temp(command_press_memory_key(), fired);
+                had
+            });
+            if !was_press_fired {
+                return true;
+            }
+        } else {
+            // Keyboard/accessibility activation path.
+            return true;
+        }
+    }
+
+    false
+}
+
 pub fn draw_settings(ctx: &egui::Context, app: &mut App) {
     let mut visuals = egui::Visuals::dark();
     visuals.panel_fill = egui::Color32::from_rgb(30, 30, 40);
@@ -88,6 +144,7 @@ pub fn draw_settings(ctx: &egui::Context, app: &mut App) {
                 .inner_margin(egui::Margin::same(20.0)),
         )
         .show(ctx, |ui| {
+            reset_command_press_state_if_needed(ui);
             // ── Header with ON/OFF toggle ──
             ui.horizontal(|ui| {
                 if let Some(icon_texture) = load_header_icon_texture(ctx) {
@@ -131,7 +188,9 @@ pub fn draw_settings(ctx: &egui::Context, app: &mut App) {
                     .rounding(egui::Rounding::same(12.0))
                     .min_size(egui::vec2(56.0, 28.0));
 
-                    if ui.add(btn).clicked() {
+                    let toggle_id = egui::Id::new("cmd::overlay_toggle");
+                    let toggle_resp = ui.push_id(toggle_id, |ui| ui.add(btn)).inner;
+                    if command_activated_on_press(ui, toggle_id, &toggle_resp) {
                         app.draft.overlay_enabled = !app.draft.overlay_enabled;
                         app.apply();
                     }
@@ -186,14 +245,17 @@ pub fn draw_settings(ctx: &egui::Context, app: &mut App) {
                     } else {
                         text.color(egui::Color32::from_rgb(140, 140, 170))
                     };
-                    if ui
-                        .add(
-                            egui::Button::new(text)
-                                .frame(false)
-                                .min_size(egui::vec2(80.0, 30.0)),
-                        )
-                        .clicked()
-                    {
+                    let tab_id = egui::Id::new(format!("cmd::tab::{:?}", tab));
+                    let tab_resp = ui
+                        .push_id(tab_id, |ui| {
+                            ui.add(
+                                egui::Button::new(text)
+                                    .frame(false)
+                                    .min_size(egui::vec2(80.0, 30.0)),
+                            )
+                        })
+                        .inner;
+                    if command_activated_on_press(ui, tab_id, &tab_resp) {
                         app.active_tab = tab;
                     }
                 }
@@ -223,10 +285,15 @@ pub fn draw_settings(ctx: &egui::Context, app: &mut App) {
             ui.separator();
             ui.add_space(4.0);
             ui.horizontal(|ui| {
-                if ui.button("Save & Apply").clicked() {
+                let save_id = egui::Id::new("cmd::save_apply");
+                let save_resp = ui.push_id(save_id, |ui| ui.button("Save & Apply")).inner;
+                if command_activated_on_press(ui, save_id, &save_resp) {
                     app.apply();
                 }
-                if ui.button("Reset Defaults").clicked() {
+
+                let reset_id = egui::Id::new("cmd::reset_defaults");
+                let reset_resp = ui.push_id(reset_id, |ui| ui.button("Reset Defaults")).inner;
+                if command_activated_on_press(ui, reset_id, &reset_resp) {
                     app.reset_defaults();
                 }
 
@@ -309,7 +376,13 @@ fn tab_behavior(app: &mut App, ui: &mut egui::Ui) {
         section_heading(ui, "Display");
 
         ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-            if ui.button("Reset to default settings").clicked() {
+            let reset_behavior_id = egui::Id::new("cmd::behavior_reset_defaults");
+            let reset_behavior_resp = ui
+                .push_id(reset_behavior_id, |ui| {
+                    ui.button("Reset to default settings")
+                })
+                .inner;
+            if command_activated_on_press(ui, reset_behavior_id, &reset_behavior_resp) {
                 app.reset_defaults();
             }
         });
@@ -350,6 +423,7 @@ fn tab_position(app: &mut App, ui: &mut egui::Ui) {
 
     let mut resolution_changed = false;
     let mut scale_changed = false;
+    let mut position_dirty = false;
 
     ui.horizontal(|ui| {
         ui.label("Display resolution:");
@@ -372,6 +446,7 @@ fn tab_position(app: &mut App, ui: &mut egui::Ui) {
                         app.draft.display_width_px = *w;
                         app.draft.display_height_px = *h;
                         resolution_changed = true;
+                        position_dirty = true;
                     }
                 }
             });
@@ -393,6 +468,7 @@ fn tab_position(app: &mut App, ui: &mut egui::Ui) {
                     if ui.selectable_label(selected, *label).clicked() {
                         app.draft.display_scale = *scale;
                         scale_changed = true;
+                        position_dirty = true;
                     }
                 }
             });
@@ -419,6 +495,7 @@ fn tab_position(app: &mut App, ui: &mut egui::Ui) {
 
         if selected_position != app.draft.position {
             app.draft.position = selected_position;
+            position_dirty = true;
             if app.draft.position == OverlayPosition::Manual {
                 app.sync_manual_to_lower_right();
                 app.preview_manual_position();
@@ -433,11 +510,14 @@ fn tab_position(app: &mut App, ui: &mut egui::Ui) {
 
     let mut manual_slider_changed = false;
 
+    let mut dragging_now = false;
+
     ui.horizontal(|ui| {
         ui.label("X position:");
         let response =
             ui.add(egui::Slider::new(&mut app.draft.overlay_x, 0.0..=display_w).suffix(" px"));
         manual_slider_changed |= response.changed();
+        dragging_now |= response.dragged();
     });
 
     ui.horizontal(|ui| {
@@ -445,10 +525,21 @@ fn tab_position(app: &mut App, ui: &mut egui::Ui) {
         let response =
             ui.add(egui::Slider::new(&mut app.draft.overlay_y, 0.0..=display_h).suffix(" px"));
         manual_slider_changed |= response.changed();
+        dragging_now |= response.dragged();
     });
 
-    if manual_slider_changed && app.draft.position == OverlayPosition::Manual {
+    app.manual_slider_drag_ended = app.manual_slider_dragging && !dragging_now;
+    app.manual_slider_dragging = dragging_now;
+
+    if manual_slider_changed {
+        if app.draft.position != OverlayPosition::Manual {
+            app.draft.position = OverlayPosition::Manual;
+        }
         app.preview_manual_position();
+        position_dirty = true;
+        if !app.manual_slider_dragging {
+            app.manual_slider_drag_ended = true;
+        }
     }
 
     // When the user touches X/Y sliders, auto-switch to Manual mode so the
@@ -462,9 +553,18 @@ fn tab_position(app: &mut App, ui: &mut egui::Ui) {
             .size(11.0)
             .color(egui::Color32::from_rgb(140, 140, 170)),
         );
-    } else if ui.button("Snap manual position to lower-right").clicked() {
-        app.sync_manual_to_lower_right();
-        app.preview_manual_position();
+    } else {
+        let snap_id = egui::Id::new("cmd::snap_manual_position");
+        let snap_resp = ui
+            .push_id(snap_id, |ui| {
+                ui.button("Snap manual position to lower-right")
+            })
+            .inner;
+        if command_activated_on_press(ui, snap_id, &snap_resp) {
+            app.sync_manual_to_lower_right();
+            app.preview_manual_position();
+            position_dirty = true;
+        }
     }
 
     ui.add_space(12.0);
@@ -472,7 +572,8 @@ fn tab_position(app: &mut App, ui: &mut egui::Ui) {
     ui.horizontal(|ui| {
         ui.label("Layout direction:");
         for layout in OverlayLayout::ALL {
-            ui.selectable_value(&mut app.draft.layout, layout, layout.label());
+            let response = ui.selectable_value(&mut app.draft.layout, layout, layout.label());
+            position_dirty |= response.changed();
         }
     });
 
@@ -481,12 +582,16 @@ fn tab_position(app: &mut App, ui: &mut egui::Ui) {
 
     ui.horizontal(|ui| {
         ui.label("Horizontal margin:");
-        ui.add(egui::Slider::new(&mut app.draft.margin_x, 0.0..=200.0).suffix(" px"));
+        let response =
+            ui.add(egui::Slider::new(&mut app.draft.margin_x, 0.0..=200.0).suffix(" px"));
+        position_dirty |= response.changed();
     });
 
     ui.horizontal(|ui| {
         ui.label("Vertical margin:");
-        ui.add(egui::Slider::new(&mut app.draft.margin_y, 0.0..=200.0).suffix(" px"));
+        let response =
+            ui.add(egui::Slider::new(&mut app.draft.margin_y, 0.0..=200.0).suffix(" px"));
+        position_dirty |= response.changed();
     });
 
     ui.add_space(12.0);
@@ -494,13 +599,21 @@ fn tab_position(app: &mut App, ui: &mut egui::Ui) {
 
     ui.horizontal(|ui| {
         ui.label("Width:");
-        ui.add(egui::Slider::new(&mut app.draft.overlay_width, 100.0..=800.0).suffix(" px"));
+        let response =
+            ui.add(egui::Slider::new(&mut app.draft.overlay_width, 100.0..=800.0).suffix(" px"));
+        position_dirty |= response.changed();
     });
 
     ui.horizontal(|ui| {
         ui.label("Height:");
-        ui.add(egui::Slider::new(&mut app.draft.overlay_height, 60.0..=600.0).suffix(" px"));
+        let response =
+            ui.add(egui::Slider::new(&mut app.draft.overlay_height, 60.0..=600.0).suffix(" px"));
+        position_dirty |= response.changed();
     });
+
+    if position_dirty {
+        app.apply();
+    }
 }
 
 fn tab_about(ui: &mut egui::Ui) {
