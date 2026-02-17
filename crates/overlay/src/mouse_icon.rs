@@ -4,7 +4,7 @@ use crate::theme::{apply_alpha, Palette};
 use keyoverlay_input::MouseButton;
 
 /// Which mouse button is currently highlighted (just clicked).
-#[derive(Clone, Copy, PartialEq)]
+#[derive(Debug, Clone, Copy, PartialEq)]
 pub enum MouseHighlight {
     None,
     Left,
