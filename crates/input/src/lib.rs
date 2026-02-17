@@ -1,5 +1,5 @@
 use std::fmt;
-use std::sync::mpsc;
+use std::sync::{mpsc, Arc};
 use std::thread;
 use std::time::Instant;
 
@@ -581,6 +581,15 @@ impl ModifierState {
 /// Spawn a background thread that listens for real keyboard and mouse input
 /// and forwards events over the provided channel.
 pub fn spawn_input_listener(tx: mpsc::Sender<InputEvent>) {
+    spawn_input_listener_with_wakeup(tx, None);
+}
+
+/// Same as `spawn_input_listener`, but allows providing a repaint wake callback
+/// that is invoked after every enqueued input event.
+pub fn spawn_input_listener_with_wakeup(
+    tx: mpsc::Sender<InputEvent>,
+    wake_repaint: Option<Arc<dyn Fn() + Send + Sync>>,
+) {
     thread::spawn(move || {
         use rdev::{listen, Event, EventType};
         use std::sync::Mutex;
@@ -604,12 +613,20 @@ pub fn spawn_input_listener(tx: mpsc::Sender<InputEvent>) {
                             }
 
                             let ke = KeyEvent::new(key, clean_mods);
-                            let _ = tx.send(InputEvent::Key(ke));
+                            if tx.send(InputEvent::Key(ke)).is_ok() {
+                                if let Some(wake) = &wake_repaint {
+                                    wake();
+                                }
+                            }
                         } else {
                             let modifiers = state.as_modifiers();
                             state.mark_active_modifiers_used();
                             let ke = KeyEvent::new(key, modifiers);
-                            let _ = tx.send(InputEvent::Key(ke));
+                            if tx.send(InputEvent::Key(ke)).is_ok() {
+                                if let Some(wake) = &wake_repaint {
+                                    wake();
+                                }
+                            }
                         }
                     }
                 }
@@ -619,7 +636,14 @@ pub fn spawn_input_listener(tx: mpsc::Sender<InputEvent>) {
                         if let Some(flag) = modifier_flag(key) {
                             modifiers.remove(flag);
                         }
-                        let _ = tx.send(InputEvent::Key(KeyEvent::new_released(key, modifiers)));
+                        if tx
+                            .send(InputEvent::Key(KeyEvent::new_released(key, modifiers)))
+                            .is_ok()
+                        {
+                            if let Some(wake) = &wake_repaint {
+                                wake();
+                            }
+                        }
 
                         if is_modifier_key(key) {
                             state.release(key);
@@ -635,7 +659,14 @@ pub fn spawn_input_listener(tx: mpsc::Sender<InputEvent>) {
                         _ => None,
                     };
                     if let Some(b) = button {
-                        let _ = tx.send(InputEvent::MouseClick(MouseClickEvent::new(b)));
+                        if tx
+                            .send(InputEvent::MouseClick(MouseClickEvent::new(b)))
+                            .is_ok()
+                        {
+                            if let Some(wake) = &wake_repaint {
+                                wake();
+                            }
+                        }
                     }
                 }
                 EventType::ButtonRelease(btn) => {
@@ -646,7 +677,14 @@ pub fn spawn_input_listener(tx: mpsc::Sender<InputEvent>) {
                         _ => None,
                     };
                     if let Some(b) = button {
-                        let _ = tx.send(InputEvent::MouseClick(MouseClickEvent::new_released(b)));
+                        if tx
+                            .send(InputEvent::MouseClick(MouseClickEvent::new_released(b)))
+                            .is_ok()
+                        {
+                            if let Some(wake) = &wake_repaint {
+                                wake();
+                            }
+                        }
                     }
                 }
                 EventType::Wheel { delta_y, .. } => {
@@ -657,7 +695,14 @@ pub fn spawn_input_listener(tx: mpsc::Sender<InputEvent>) {
                     } else {
                         return;
                     };
-                    let _ = tx.send(InputEvent::Scroll(ScrollEvent::new(direction)));
+                    if tx
+                        .send(InputEvent::Scroll(ScrollEvent::new(direction)))
+                        .is_ok()
+                    {
+                        if let Some(wake) = &wake_repaint {
+                            wake();
+                        }
+                    }
                 }
                 _ => {}
             }

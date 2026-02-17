@@ -7,7 +7,7 @@ mod win_region;
 use std::collections::{HashMap, HashSet};
 use std::env;
 use std::sync::mpsc::Receiver;
-use std::sync::OnceLock;
+use std::sync::{Mutex, OnceLock};
 use std::time::{Duration, Instant};
 
 use anyhow::Result;
@@ -33,6 +33,44 @@ const PILL_PAD_Y: i32 = 16;
 const PILL_MIN_H: i32 = 46;
 const PILL_MIN_W: i32 = 88;
 const PILL_RADIUS: i32 = 18;
+
+static EXTERNAL_REPAINT_CTX: OnceLock<Mutex<Option<egui::Context>>> = OnceLock::new();
+static EXTERNAL_REPAINT_PENDING: OnceLock<Mutex<bool>> = OnceLock::new();
+
+fn register_external_repaint_ctx(ctx: &egui::Context) {
+    let storage = EXTERNAL_REPAINT_CTX.get_or_init(|| Mutex::new(None));
+    *storage.lock().unwrap() = Some(ctx.clone());
+
+    let pending = EXTERNAL_REPAINT_PENDING
+        .get_or_init(|| Mutex::new(false))
+        .lock()
+        .unwrap();
+    if *pending {
+        ctx.request_repaint();
+    }
+}
+
+pub fn request_external_repaint() {
+    if let Some(storage) = EXTERNAL_REPAINT_CTX.get() {
+        if let Some(ctx) = storage.lock().unwrap().clone() {
+            if repaint_debug_enabled() {
+                eprintln!("[overlay-repaint] producer wake -> request_repaint");
+            }
+            ctx.request_repaint();
+            if let Some(flag) = EXTERNAL_REPAINT_PENDING.get() {
+                *flag.lock().unwrap() = false;
+            }
+            return;
+        }
+    }
+
+    if let Some(flag) = EXTERNAL_REPAINT_PENDING.get() {
+        *flag.lock().unwrap() = true;
+    } else {
+        EXTERNAL_REPAINT_PENDING.get_or_init(|| Mutex::new(true));
+    }
+}
+
 fn overlay_viewport_title() -> String {
     if overlay_startup_diagnostics::enabled() {
         format!("{OVERLAY_VIEWPORT_TITLE} (pid={})", std::process::id())
@@ -1131,6 +1169,8 @@ impl eframe::App for App {
     }
 
     fn update(&mut self, ctx: &egui::Context, _frame: &mut eframe::Frame) {
+        register_external_repaint_ctx(ctx);
+
         if !self.first_frame_logged {
             overlay_startup_diagnostics::log_event("first update/frame");
             self.first_frame_logged = true;
@@ -1144,6 +1184,9 @@ impl eframe::App for App {
             self.startup_drain = false;
         }
 
+        if repaint_debug_enabled() {
+            eprintln!("[overlay-repaint] update start");
+        }
         let mut processed_events = 0usize;
         while let Ok(event) = self.rx.try_recv() {
             if !self.first_input_logged {
