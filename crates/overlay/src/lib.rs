@@ -14,7 +14,7 @@ use anyhow::Result;
 use eframe::egui;
 use eframe::epaint::Rgba;
 use keyoverlay_core::{AppConfig, OverlayPosition, SharedConfig};
-use keyoverlay_input::{InputEvent, Key, Modifiers, MouseButton, ScrollDirection};
+use keyoverlay_input::{InputEvent, Key, MouseButton, ScrollDirection};
 use mouse_icon::{draw_mouse_icon, MouseHighlight, ScrollArrowDirection};
 
 use win_region::{
@@ -226,32 +226,6 @@ impl InputState {
         )
     }
 
-    fn sync_modifier_keys(&mut self, modifiers: Modifiers) {
-        if modifiers.contains(Modifiers::CTRL) {
-            self.pressed_keys.insert(Key::Ctrl);
-        } else {
-            self.pressed_keys.remove(&Key::Ctrl);
-        }
-
-        if modifiers.contains(Modifiers::ALT) {
-            self.pressed_keys.insert(Key::Alt);
-        } else {
-            self.pressed_keys.remove(&Key::Alt);
-        }
-
-        if modifiers.contains(Modifiers::SHIFT) {
-            self.pressed_keys.insert(Key::Shift);
-        } else {
-            self.pressed_keys.remove(&Key::Shift);
-        }
-
-        if modifiers.contains(Modifiers::WIN) {
-            self.pressed_keys.insert(Key::Win);
-        } else {
-            self.pressed_keys.remove(&Key::Win);
-        }
-    }
-
     fn apply_event(&mut self, event: InputEvent) {
         let now = event.timestamp();
 
@@ -272,8 +246,6 @@ impl InputState {
 
         match event {
             InputEvent::Key(e) => {
-                self.sync_modifier_keys(e.modifiers);
-
                 if e.is_down {
                     self.pressed_keys.insert(e.key);
                 } else {
@@ -1190,6 +1162,43 @@ impl eframe::App for App {
             }
             self.tray_on_event(&event, now);
             self.input_state.apply_event(event);
+            if repaint_debug_enabled() {
+                let pressed = &self.input_state.pressed_keys;
+                let modifier_order = [Key::Ctrl, Key::Alt, Key::Shift, Key::Win];
+                let modifiers_down: Vec<Key> = modifier_order
+                    .into_iter()
+                    .filter(|k| pressed.contains(k))
+                    .collect();
+                let mut non_modifiers_down: Vec<Key> = pressed
+                    .iter()
+                    .copied()
+                    .filter(|k| !matches!(k, Key::Ctrl | Key::Alt | Key::Shift | Key::Win))
+                    .collect();
+                non_modifiers_down.sort_by_key(|k| key_sort_rank(*k));
+                let display_tiles = if !modifiers_down.is_empty() && !non_modifiers_down.is_empty()
+                {
+                    let mod_label = modifiers_down
+                        .iter()
+                        .map(|k| k.to_string().to_uppercase())
+                        .collect::<Vec<_>>()
+                        .join(" + ");
+                    non_modifiers_down
+                        .iter()
+                        .map(|k| format!("{} + {}", mod_label, k.to_string().to_uppercase()))
+                        .collect::<Vec<_>>()
+                } else {
+                    let mut individual = pressed.iter().copied().collect::<Vec<_>>();
+                    individual.sort_by_key(|k| key_sort_rank(*k));
+                    individual
+                        .iter()
+                        .map(|k| k.to_string().to_uppercase())
+                        .collect::<Vec<_>>()
+                };
+                eprintln!(
+                    "[overlay-repaint] pressed_keys={:?} modifiers_down={:?} non_mods_down={:?} tiles={:?}",
+                    pressed, modifiers_down, non_modifiers_down, display_tiles
+                );
+            }
             self.active_until = now + Duration::from_millis(250);
             processed_events += 1;
         }
