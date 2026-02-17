@@ -1,3 +1,4 @@
+mod cursor_ring;
 mod mouse_icon;
 mod overlay_startup_diagnostics;
 mod settings_window;
@@ -11,6 +12,7 @@ use std::sync::{Mutex, OnceLock};
 use std::time::{Duration, Instant};
 
 use anyhow::Result;
+use cursor_ring::{CursorRingController, CursorRingSettings};
 use eframe::egui;
 use eframe::epaint::Rgba;
 use keyoverlay_core::{AppConfig, OverlayPosition, SharedConfig};
@@ -531,6 +533,7 @@ struct App {
     manual_slider_drag_ended: bool,
     last_live_move_at: Option<Instant>,
     active_until: Instant,
+    cursor_ring: CursorRingController,
 }
 
 impl App {
@@ -540,6 +543,9 @@ impl App {
             draft.font_size = 26.0;
         }
         draft.overlay_scale = draft.overlay_scale.clamp(0.6, 2.0);
+        draft.cursor_ring_size_px = draft.cursor_ring_size_px.clamp(24.0, 120.0);
+        draft.cursor_ring_thickness_px = draft.cursor_ring_thickness_px.clamp(2.0, 12.0);
+        draft.cursor_ring_opacity = draft.cursor_ring_opacity.clamp(0.2, 1.0);
         if draft.position == OverlayPosition::Manual
             && (draft.overlay_x - 500.0).abs() < f32::EPSILON
             && (draft.overlay_y - 500.0).abs() < f32::EPSILON
@@ -548,6 +554,8 @@ impl App {
             draft.overlay_x = x;
             draft.overlay_y = y;
         }
+
+        let cursor_ring_settings = CursorRingSettings::from_config(&draft);
 
         Self {
             config,
@@ -583,6 +591,7 @@ impl App {
             manual_slider_drag_ended: false,
             last_live_move_at: None,
             active_until: Instant::now(),
+            cursor_ring: CursorRingController::new(cursor_ring_settings),
         }
     }
 
@@ -591,6 +600,9 @@ impl App {
             self.draft.font_size = 26.0;
         }
         self.draft.overlay_scale = self.draft.overlay_scale.clamp(0.6, 2.0);
+        self.draft.cursor_ring_size_px = self.draft.cursor_ring_size_px.clamp(24.0, 120.0);
+        self.draft.cursor_ring_thickness_px = self.draft.cursor_ring_thickness_px.clamp(2.0, 12.0);
+        self.draft.cursor_ring_opacity = self.draft.cursor_ring_opacity.clamp(0.2, 1.0);
         *self.config.lock().unwrap() = self.draft.clone();
         self.draft.save();
         self.status_msg = Some(("Settings saved.".into(), Instant::now()));
@@ -1213,6 +1225,8 @@ impl eframe::App for App {
         }
 
         *self.config.lock().unwrap() = self.draft.clone();
+        self.cursor_ring
+            .sync(CursorRingSettings::from_config(&self.draft));
 
         let screen_rect = ctx.input(|i| i.screen_rect());
         overlay_startup_diagnostics::log_event(format!(
@@ -1638,6 +1652,12 @@ impl eframe::App for App {
         } else {
             ctx.request_repaint_after(Duration::from_millis(250));
         }
+    }
+}
+
+impl Drop for App {
+    fn drop(&mut self) {
+        self.cursor_ring.shutdown();
     }
 }
 

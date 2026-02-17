@@ -93,6 +93,18 @@ fn default_overlay_scale() -> f32 {
     1.0
 }
 
+fn default_cursor_ring_size_px() -> f32 {
+    56.0
+}
+
+fn default_cursor_ring_thickness_px() -> f32 {
+    4.0
+}
+
+fn default_cursor_ring_opacity() -> f32 {
+    0.9
+}
+
 // ── Overlay Layout ───────────────────────────────────────────────────────
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
@@ -172,6 +184,14 @@ pub struct AppConfig {
     #[serde(default = "default_show_mouse_event_text")]
     pub show_mouse_event_text: bool,
     pub show_scroll: bool,
+    #[serde(default)]
+    pub enable_green_cursor_ring: bool,
+    #[serde(default = "default_cursor_ring_size_px")]
+    pub cursor_ring_size_px: f32,
+    #[serde(default = "default_cursor_ring_thickness_px")]
+    pub cursor_ring_thickness_px: f32,
+    #[serde(default = "default_cursor_ring_opacity")]
+    pub cursor_ring_opacity: f32,
 
     // ── Position & Layout ──
     pub position: OverlayPosition,
@@ -225,6 +245,10 @@ impl Default for AppConfig {
             show_mouse_icon: true,
             show_mouse_event_text: false,
             show_scroll: true,
+            enable_green_cursor_ring: false,
+            cursor_ring_size_px: default_cursor_ring_size_px(),
+            cursor_ring_thickness_px: default_cursor_ring_thickness_px(),
+            cursor_ring_opacity: default_cursor_ring_opacity(),
 
             position: OverlayPosition::TopRight,
             layout: OverlayLayout::Vertical,

@@ -416,6 +416,58 @@ fn tab_behavior(app: &mut App, ui: &mut egui::Ui) {
     );
     ui.checkbox(&mut app.draft.show_mouse_icon, "Show mouse icon in overlay");
     ui.checkbox(&mut app.draft.show_scroll, "Show scroll events");
+
+    ui.add_space(12.0);
+    section_heading(ui, "Cursor Highlight");
+
+    let ring_toggle = ui.checkbox(
+        &mut app.draft.enable_green_cursor_ring,
+        "Enable green cursor ring",
+    );
+    if ring_toggle.changed() {
+        app.apply();
+    }
+
+    ui.add_enabled_ui(app.draft.enable_green_cursor_ring, |ui| {
+        ui.horizontal(|ui| {
+            ui.label("Ring size:");
+            if ui
+                .add(
+                    egui::Slider::new(&mut app.draft.cursor_ring_size_px, 24.0..=120.0)
+                        .suffix(" px"),
+                )
+                .changed()
+            {
+                app.apply();
+            }
+        });
+
+        ui.horizontal(|ui| {
+            ui.label("Ring thickness:");
+            if ui
+                .add(
+                    egui::Slider::new(&mut app.draft.cursor_ring_thickness_px, 2.0..=12.0)
+                        .suffix(" px"),
+                )
+                .changed()
+            {
+                app.apply();
+            }
+        });
+
+        ui.horizontal(|ui| {
+            ui.label("Ring opacity:");
+            if ui
+                .add(egui::Slider::new(
+                    &mut app.draft.cursor_ring_opacity,
+                    0.2..=1.0,
+                ))
+                .changed()
+            {
+                app.apply();
+            }
+        });
+    });
 }
 
 fn tab_position(app: &mut App, ui: &mut egui::Ui) {
