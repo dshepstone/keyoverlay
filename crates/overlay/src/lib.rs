@@ -4,7 +4,7 @@ mod settings_window;
 mod theme;
 mod win_region;
 
-use std::collections::HashSet;
+use std::collections::{HashMap, HashSet};
 use std::env;
 use std::sync::mpsc::Receiver;
 use std::sync::OnceLock;
@@ -122,10 +122,19 @@ impl SingleTileState {
 }
 
 #[derive(Clone)]
+struct MousePressVisualState {
+    is_down: bool,
+    pressed_at: Instant,
+    released_at: Option<Instant>,
+    anim_down: f32,
+    alpha: f32,
+}
+
+#[derive(Clone)]
 struct OverlayTrayState {
     key_tile: SingleTileState,
-    mouse_tile: SingleTileState,
-    mouse_highlight: MouseHighlight,
+    scroll_tile: SingleTileState,
+    active_mouse: HashMap<MouseButton, MousePressVisualState>,
     pill_w: f32,
     pill_w_target: f32,
     tray_alpha: f32,
@@ -137,8 +146,8 @@ impl OverlayTrayState {
         let now = Instant::now();
         Self {
             key_tile: SingleTileState::new(now),
-            mouse_tile: SingleTileState::new(now),
-            mouse_highlight: MouseHighlight::None,
+            scroll_tile: SingleTileState::new(now),
+            active_mouse: HashMap::new(),
             pill_w: 0.0,
             pill_w_target: 0.0,
             tray_alpha: 0.0,
@@ -449,6 +458,11 @@ fn single_tile_debug_enabled() -> bool {
     *ENABLED.get_or_init(|| env::var("OVERLAY_SINGLE_TILE_DEBUG").is_ok_and(|v| v == "1"))
 }
 
+fn mouse_hold_debug_enabled() -> bool {
+    static ENABLED: OnceLock<bool> = OnceLock::new();
+    *ENABLED.get_or_init(|| env::var("OVERLAY_MOUSE_HOLD_DEBUG").is_ok_and(|v| v == "1"))
+}
+
 fn ease_out_cubic(t: f32) -> f32 {
     let x = t.clamp(0.0, 1.0);
     1.0 - (1.0 - x).powi(3)
@@ -635,25 +649,33 @@ impl App {
                 }
             }
             InputEvent::MouseClick(e) => {
-                let label = match e.button {
-                    MouseButton::Left => "LMB",
-                    MouseButton::Right => "RMB",
-                    MouseButton::Middle => "MMB",
-                }
-                .to_string();
                 if e.is_down {
-                    self.tray_state
-                        .mouse_tile
-                        .register_press(label.clone(), now, None);
-                    self.tray_state.mouse_highlight = MouseHighlight::from_button(e.button);
-                    if single_tile_debug_enabled() {
-                        eprintln!("[overlay-single] MouseDown label={label}");
+                    self.tray_state.active_mouse.insert(
+                        e.button,
+                        MousePressVisualState {
+                            is_down: true,
+                            pressed_at: now,
+                            released_at: None,
+                            anim_down: 1.0,
+                            alpha: 1.0,
+                        },
+                    );
+                    if mouse_hold_debug_enabled() {
+                        eprintln!(
+                            "[overlay-mouse-hold] down {:?} -> held (expiry=none) active={}",
+                            e.button,
+                            self.tray_state.active_mouse.len()
+                        );
                     }
-                } else {
-                    self.tray_state.mouse_tile.register_release(now);
-                    self.tray_state.mouse_highlight = MouseHighlight::None;
-                    if single_tile_debug_enabled() {
-                        eprintln!("[overlay-single] MouseUp label={label}");
+                } else if let Some(state) = self.tray_state.active_mouse.get_mut(&e.button) {
+                    state.is_down = false;
+                    state.released_at = Some(now);
+                    if mouse_hold_debug_enabled() {
+                        eprintln!(
+                            "[overlay-mouse-hold] up {:?} -> fade_start active={}",
+                            e.button,
+                            self.tray_state.active_mouse.len()
+                        );
                     }
                 }
             }
@@ -663,12 +685,14 @@ impl App {
                     ScrollDirection::Down => "Wheel↓",
                 }
                 .to_string();
-                self.tray_state.mouse_tile.register_press(
+                self.tray_state.scroll_tile.register_press(
                     label.clone(),
                     now,
                     Some(Duration::from_millis(140)),
                 );
-                self.tray_state.mouse_highlight = MouseHighlight::None;
+                if mouse_hold_debug_enabled() {
+                    eprintln!("[overlay-mouse-hold] scroll pulse label={label} expiry=140ms");
+                }
                 if single_tile_debug_enabled() {
                     eprintln!("[overlay-single] MouseWheel label={label}");
                 }
@@ -678,26 +702,64 @@ impl App {
 
     fn build_render_tokens(&mut self, now: Instant, dt: f32) -> Vec<RenderToken> {
         const IDLE_FADE_MS: u64 = 450;
+        const MOUSE_FADE_OUT_MS: f32 = 200.0;
 
         self.tray_state.key_tile.tick(now, dt, IDLE_FADE_MS);
-        self.tray_state.mouse_tile.tick(now, dt, IDLE_FADE_MS);
+        self.tray_state.scroll_tile.tick(now, dt, IDLE_FADE_MS);
 
-        if self.tray_state.mouse_tile.visible_alpha < 0.01 {
-            self.tray_state.mouse_highlight = MouseHighlight::None;
+        let mut released_buttons = Vec::new();
+        for (button, state) in &mut self.tray_state.active_mouse {
+            let _held_ms = now.duration_since(state.pressed_at).as_millis();
+            let down_target = if state.is_down { 1.0 } else { 0.0 };
+            let down_factor = 1.0 - (-38.0 * dt.max(0.0)).exp();
+            state.anim_down += (down_target - state.anim_down) * down_factor;
+
+            if state.is_down {
+                state.alpha = 1.0;
+            } else if let Some(released_at) = state.released_at {
+                let elapsed_ms = now.duration_since(released_at).as_secs_f32() * 1000.0;
+                let t = (elapsed_ms / MOUSE_FADE_OUT_MS).clamp(0.0, 1.0);
+                state.alpha = 1.0 - t;
+                if t >= 1.0 {
+                    released_buttons.push(*button);
+                }
+            }
+        }
+        for button in released_buttons {
+            self.tray_state.active_mouse.remove(&button);
+            if mouse_hold_debug_enabled() {
+                eprintln!("[overlay-mouse-hold] remove {:?} after fade", button);
+            }
         }
 
-        let mut tokens = Vec::with_capacity(2);
+        let mut tokens = Vec::with_capacity(4);
 
-        if self.draft.show_mouse_icon && self.tray_state.mouse_tile.visible_alpha > 0.01 {
-            tokens.push(RenderToken {
-                label: self.tray_state.mouse_tile.label.clone(),
-                is_mouse: true,
-                mouse_highlight: self.tray_state.mouse_highlight,
-                alpha: self.tray_state.mouse_tile.visible_alpha.clamp(0.0, 1.0),
-                scale: 1.0 - (self.tray_state.mouse_tile.anim_down * 0.015),
-                pulse: 0.0,
-                font_size: self.draft.font_size + 4.0,
-            });
+        if self.draft.show_mouse_icon {
+            for button in [MouseButton::Left, MouseButton::Middle, MouseButton::Right] {
+                if let Some(state) = self.tray_state.active_mouse.get(&button) {
+                    tokens.push(RenderToken {
+                        label: format!("{:?}", button),
+                        is_mouse: true,
+                        mouse_highlight: MouseHighlight::from_button(button),
+                        alpha: state.alpha.clamp(0.0, 1.0),
+                        scale: 1.0 - (state.anim_down * 0.015),
+                        pulse: 0.0,
+                        font_size: self.draft.font_size + 4.0,
+                    });
+                }
+            }
+
+            if self.tray_state.scroll_tile.visible_alpha > 0.01 {
+                tokens.push(RenderToken {
+                    label: self.tray_state.scroll_tile.label.clone(),
+                    is_mouse: true,
+                    mouse_highlight: MouseHighlight::None,
+                    alpha: self.tray_state.scroll_tile.visible_alpha.clamp(0.0, 1.0),
+                    scale: 1.0 - (self.tray_state.scroll_tile.anim_down * 0.015),
+                    pulse: 0.0,
+                    font_size: self.draft.font_size + 4.0,
+                });
+            }
         }
 
         if self.tray_state.key_tile.visible_alpha > 0.01 {
@@ -714,10 +776,14 @@ impl App {
 
         if single_tile_debug_enabled() {
             eprintln!(
-                "[overlay-single] tokens={} key_down={:.2} mouse_down={:.2}",
+                "[overlay-single] tokens={} key_down={:.2} held_mouse={}",
                 tokens.len(),
                 self.tray_state.key_tile.anim_down,
-                self.tray_state.mouse_tile.anim_down
+                self.tray_state
+                    .active_mouse
+                    .values()
+                    .filter(|m| m.is_down)
+                    .count()
             );
         }
 
