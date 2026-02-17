@@ -510,11 +510,14 @@ fn tab_position(app: &mut App, ui: &mut egui::Ui) {
 
     let mut manual_slider_changed = false;
 
+    let mut dragging_now = false;
+
     ui.horizontal(|ui| {
         ui.label("X position:");
         let response =
             ui.add(egui::Slider::new(&mut app.draft.overlay_x, 0.0..=display_w).suffix(" px"));
         manual_slider_changed |= response.changed();
+        dragging_now |= response.dragged();
     });
 
     ui.horizontal(|ui| {
@@ -522,7 +525,11 @@ fn tab_position(app: &mut App, ui: &mut egui::Ui) {
         let response =
             ui.add(egui::Slider::new(&mut app.draft.overlay_y, 0.0..=display_h).suffix(" px"));
         manual_slider_changed |= response.changed();
+        dragging_now |= response.dragged();
     });
+
+    app.manual_slider_drag_ended = app.manual_slider_dragging && !dragging_now;
+    app.manual_slider_dragging = dragging_now;
 
     if manual_slider_changed {
         if app.draft.position != OverlayPosition::Manual {
@@ -530,6 +537,9 @@ fn tab_position(app: &mut App, ui: &mut egui::Ui) {
         }
         app.preview_manual_position();
         position_dirty = true;
+        if !app.manual_slider_dragging {
+            app.manual_slider_drag_ended = true;
+        }
     }
 
     // When the user touches X/Y sliders, auto-switch to Manual mode so the

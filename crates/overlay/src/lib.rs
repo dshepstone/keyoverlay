@@ -517,6 +517,9 @@ struct App {
     region_debounce: Duration,
     last_sent_outer_pos: Option<egui::Pos2>,
     last_sent_inner_size: Option<egui::Vec2>,
+    manual_slider_dragging: bool,
+    manual_slider_drag_ended: bool,
+    last_live_move_at: Option<Instant>,
 }
 
 impl App {
@@ -565,6 +568,9 @@ impl App {
             region_debounce: Duration::from_millis(120),
             last_sent_outer_pos: None,
             last_sent_inner_size: None,
+            manual_slider_dragging: false,
+            manual_slider_drag_ended: false,
+            last_live_move_at: None,
         }
     }
 
@@ -1124,6 +1130,10 @@ impl eframe::App for App {
         }
 
         settings_window::draw_settings(ctx, self);
+        if self.active_tab != settings_window::SettingsTab::Position {
+            self.manual_slider_dragging = false;
+            self.manual_slider_drag_ended = false;
+        }
 
         if self.draft.overlay_enabled {
             let now = Instant::now();
@@ -1182,12 +1192,20 @@ impl eframe::App for App {
             let startup_hidden_mode = true;
             let should_show_overlay = overlay_visible;
 
+            let manual_live_reposition = self.active_tab == settings_window::SettingsTab::Position
+                && self.draft.position == OverlayPosition::Manual
+                && (self.manual_slider_dragging || self.manual_slider_drag_ended);
+
             if should_show_overlay {
-                if self.tray_state.left_anchor.is_none() {
-                    self.tray_state.left_anchor = Some(win_pos);
-                }
-                if let Some(anchor) = self.tray_state.left_anchor {
-                    win_pos = anchor;
+                if manual_live_reposition {
+                    self.tray_state.left_anchor = None;
+                } else {
+                    if self.tray_state.left_anchor.is_none() {
+                        self.tray_state.left_anchor = Some(win_pos);
+                    }
+                    if let Some(anchor) = self.tray_state.left_anchor {
+                        win_pos = anchor;
+                    }
                 }
             } else {
                 self.tray_state.left_anchor = None;
@@ -1244,12 +1262,23 @@ impl eframe::App for App {
                         );
                     }
                 }
-                if self.last_sent_outer_pos != Some(win_pos) {
+                let move_changed = self.last_sent_outer_pos != Some(win_pos);
+                let live_throttle = Duration::from_millis(10);
+                let allow_live_move = if self.manual_slider_dragging {
+                    self.last_live_move_at
+                        .is_none_or(|t| now.duration_since(t) >= live_throttle)
+                        || self.manual_slider_drag_ended
+                } else {
+                    true
+                };
+                if move_changed && allow_live_move {
                     ctx.send_viewport_cmd_to(
                         overlay_id,
                         egui::ViewportCommand::OuterPosition(win_pos),
                     );
                     self.last_sent_outer_pos = Some(win_pos);
+                    self.last_live_move_at = Some(now);
+                    self.manual_slider_drag_ended = false;
                     if single_tile_debug_enabled() {
                         eprintln!(
                             "[overlay-tray] move x={:.1} y={:.1} w={:.1} h={:.1}",
