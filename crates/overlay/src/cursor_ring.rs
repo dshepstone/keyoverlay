@@ -36,9 +36,10 @@ mod imp {
     use windows::Win32::UI::HiDpi::GetDpiForWindow;
     use windows::Win32::UI::WindowsAndMessaging::{
         CreateWindowExW, DestroyWindow, GetCursorPos, IsWindow, SetLayeredWindowAttributes,
-        SetWindowPos, ShowWindow, LWA_ALPHA, LWA_COLORKEY, SWP_NOACTIVATE, SWP_NOOWNERZORDER,
-        SWP_SHOWWINDOW, SW_HIDE, SW_SHOWNOACTIVATE, WINDOW_EX_STYLE, WS_EX_LAYERED,
-        WS_EX_NOACTIVATE, WS_EX_TOOLWINDOW, WS_EX_TOPMOST, WS_EX_TRANSPARENT, WS_POPUP,
+        SetWindowPos, ShowWindow, HWND_TOPMOST, LWA_ALPHA, LWA_COLORKEY, SWP_NOACTIVATE,
+        SWP_NOOWNERZORDER, SWP_SHOWWINDOW, SW_HIDE, SW_SHOWNOACTIVATE, WINDOW_EX_STYLE,
+        WS_EX_LAYERED, WS_EX_NOACTIVATE, WS_EX_TOOLWINDOW, WS_EX_TOPMOST, WS_EX_TRANSPARENT,
+        WS_POPUP,
     };
 
     use super::CursorRingSettings;
@@ -47,6 +48,13 @@ mod imp {
         static ENABLED: OnceLock<bool> = OnceLock::new();
         *ENABLED
             .get_or_init(|| std::env::var("OVERLAY_REPAINT_DEBUG").is_ok_and(|value| value == "1"))
+    }
+
+    fn static_class_name() -> &'static [u16] {
+        static CLASS_NAME: OnceLock<Vec<u16>> = OnceLock::new();
+        CLASS_NAME
+            .get_or_init(|| "STATIC\0".encode_utf16().collect::<Vec<u16>>())
+            .as_slice()
     }
 
     fn create_cursor_ring_window() -> Option<HWND> {
@@ -59,7 +67,7 @@ mod imp {
                         | WS_EX_NOACTIVATE.0
                         | WS_EX_TOPMOST.0,
                 ),
-                PCWSTR(windows::w!("STATIC").as_ptr()),
+                PCWSTR(static_class_name().as_ptr()),
                 PCWSTR::null(),
                 WS_POPUP,
                 0,
@@ -204,7 +212,7 @@ mod imp {
                             unsafe {
                                 let _ = SetWindowPos(
                                     window,
-                                    HWND(-1),
+                                    HWND_TOPMOST,
                                     0,
                                     0,
                                     scaled_diameter,
@@ -225,7 +233,7 @@ mod imp {
                         }
 
                         let mut point = POINT::default();
-                        if unsafe { GetCursorPos(&mut point) }.as_bool() {
+                        if unsafe { GetCursorPos(&mut point) }.is_ok() {
                             let moved = last_cursor != Some((point.x, point.y));
                             let due = last_move.elapsed() >= Duration::from_millis(12);
                             if moved || due {
@@ -237,7 +245,7 @@ mod imp {
                                 unsafe {
                                     let _ = SetWindowPos(
                                         window,
-                                        HWND(-1),
+                                        HWND_TOPMOST,
                                         x,
                                         y,
                                         scaled_diameter,
