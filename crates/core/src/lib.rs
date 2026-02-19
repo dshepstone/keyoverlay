@@ -105,6 +105,67 @@ fn default_cursor_ring_opacity() -> f32 {
     0.9
 }
 
+fn default_cursor_glow() -> f32 {
+    0.0
+}
+
+fn default_cursor_hide_after_ms() -> u32 {
+    0
+}
+
+fn default_sound_volume() -> f32 {
+    0.5
+}
+
+fn default_sound_preset() -> String {
+    "Typewriter".to_string()
+}
+
+// ── Cursor Theme ────────────────────────────────────────────────────────
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+pub enum CursorTheme {
+    GreenRing,
+    BlueGlow,
+    RedDot,
+    YellowPulse,
+    PurpleHaze,
+    WhiteCircle,
+}
+
+impl CursorTheme {
+    pub const ALL: [CursorTheme; 6] = [
+        CursorTheme::GreenRing,
+        CursorTheme::BlueGlow,
+        CursorTheme::RedDot,
+        CursorTheme::YellowPulse,
+        CursorTheme::PurpleHaze,
+        CursorTheme::WhiteCircle,
+    ];
+
+    pub fn label(self) -> &'static str {
+        match self {
+            CursorTheme::GreenRing => "Green Ring",
+            CursorTheme::BlueGlow => "Blue Glow",
+            CursorTheme::RedDot => "Red Dot",
+            CursorTheme::YellowPulse => "Yellow Pulse",
+            CursorTheme::PurpleHaze => "Purple Haze",
+            CursorTheme::WhiteCircle => "White Circle",
+        }
+    }
+
+    pub fn color(self) -> Color {
+        match self {
+            CursorTheme::GreenRing => Color::rgb(100, 220, 100),
+            CursorTheme::BlueGlow => Color::rgb(80, 160, 255),
+            CursorTheme::RedDot => Color::rgb(240, 60, 60),
+            CursorTheme::YellowPulse => Color::rgb(255, 210, 60),
+            CursorTheme::PurpleHaze => Color::rgb(180, 100, 255),
+            CursorTheme::WhiteCircle => Color::rgb(240, 240, 240),
+        }
+    }
+}
+
 // ── Overlay Layout ───────────────────────────────────────────────────────
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
@@ -192,6 +253,22 @@ pub struct AppConfig {
     pub cursor_ring_thickness_px: f32,
     #[serde(default = "default_cursor_ring_opacity")]
     pub cursor_ring_opacity: f32,
+    #[serde(default)]
+    pub cursor_theme: Option<CursorTheme>,
+    #[serde(default = "default_cursor_glow")]
+    pub cursor_glow: f32,
+    #[serde(default = "default_cursor_hide_after_ms")]
+    pub cursor_hide_after_ms: u32,
+    #[serde(default)]
+    pub enable_click_animation: bool,
+
+    // ── Sounds ──
+    #[serde(default)]
+    pub enable_keystroke_sounds: bool,
+    #[serde(default = "default_sound_volume")]
+    pub sound_volume: f32,
+    #[serde(default = "default_sound_preset")]
+    pub sound_preset: String,
 
     // ── Position & Layout ──
     pub position: OverlayPosition,
@@ -249,6 +326,14 @@ impl Default for AppConfig {
             cursor_ring_size_px: default_cursor_ring_size_px(),
             cursor_ring_thickness_px: default_cursor_ring_thickness_px(),
             cursor_ring_opacity: default_cursor_ring_opacity(),
+            cursor_theme: None,
+            cursor_glow: default_cursor_glow(),
+            cursor_hide_after_ms: default_cursor_hide_after_ms(),
+            enable_click_animation: false,
+
+            enable_keystroke_sounds: false,
+            sound_volume: default_sound_volume(),
+            sound_preset: default_sound_preset(),
 
             position: OverlayPosition::TopRight,
             layout: OverlayLayout::Vertical,

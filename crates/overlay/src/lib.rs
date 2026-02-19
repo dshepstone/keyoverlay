@@ -21,8 +21,8 @@ use mouse_icon::{draw_mouse_icon, MouseHighlight, ScrollArrowDirection};
 
 use win_region::{
     apply_no_activate_styles, apply_tray_region_hwnd_with_redraw, disable_dwm_transitions,
-    find_hwnd_by_title, force_redraw, hwnd_is_valid, is_foreground_window, show_window_no_activate,
-    snapshot_hwnd_state, OverlayHwnd, PillRect,
+    find_hwnd_by_title, force_redraw, hide_window, hwnd_is_valid, is_foreground_window,
+    show_window_no_activate, snapshot_hwnd_state, OverlayHwnd, PillRect,
 };
 
 const OVERLAY_VIEWPORT_TITLE: &str = "KeyOverlayOverlay";
@@ -475,6 +475,11 @@ fn repaint_debug_enabled() -> bool {
     *ENABLED.get_or_init(|| env::var("OVERLAY_REPAINT_DEBUG").is_ok_and(|v| v == "1"))
 }
 
+fn minimize_debug_enabled() -> bool {
+    static ENABLED: OnceLock<bool> = OnceLock::new();
+    *ENABLED.get_or_init(|| env::var("OVERLAY_MINIMIZE_DEBUG").is_ok_and(|v| v == "1"))
+}
+
 fn ease_out_cubic(t: f32) -> f32 {
     let x = t.clamp(0.0, 1.0);
     1.0 - (1.0 - x).powi(3)
@@ -534,6 +539,10 @@ struct App {
     last_live_move_at: Option<Instant>,
     active_until: Instant,
     cursor_ring: CursorRingController,
+    /// Track whether the main UI window is minimized so the overlay can be hidden.
+    ui_minimized: bool,
+    /// Previous token count for detecting token changes (combo delay fix).
+    prev_token_count: usize,
 }
 
 impl App {
@@ -560,7 +569,7 @@ impl App {
         Self {
             config,
             draft,
-            active_tab: settings_window::SettingsTab::Appearance,
+            active_tab: settings_window::SettingsTab::General,
             status_msg: None,
             rx,
             input_state: InputState::new(),
@@ -584,7 +593,7 @@ impl App {
             pending_region: None,
             region_settle_deadline: None,
             region_redraw_needed: false,
-            region_debounce: Duration::from_millis(120),
+            region_debounce: Duration::from_millis(16),
             last_sent_outer_pos: None,
             last_sent_inner_size: None,
             manual_slider_dragging: false,
@@ -592,6 +601,8 @@ impl App {
             last_live_move_at: None,
             active_until: Instant::now(),
             cursor_ring: CursorRingController::new(cursor_ring_settings),
+            ui_minimized: false,
+            prev_token_count: 0,
         }
     }
 
@@ -951,10 +962,23 @@ impl App {
         }
 
         self.tray_state.pill_w_target = tray_w_raw as f32 / px_scale;
-        let k = 20.0;
-        let factor = 1.0 - (-k * dt.max(0.0)).exp();
-        self.tray_state.pill_w += (self.tray_state.pill_w_target - self.tray_state.pill_w) * factor;
-        self.tray_state.tray_alpha += (1.0 - self.tray_state.tray_alpha) * factor;
+
+        // When token count changes (new combo key pressed or released), snap
+        // width immediately to avoid clipping the new content.  This eliminates
+        // the perceived "delay" when holding a modifier and pressing new keys.
+        let token_count_changed = pill_count != self.prev_token_count;
+        self.prev_token_count = pill_count;
+
+        if token_count_changed || (self.tray_state.pill_w_target - self.tray_state.pill_w).abs() > 40.0 {
+            // Snap: jump directly to target width for instant visibility.
+            self.tray_state.pill_w = self.tray_state.pill_w_target;
+            self.tray_state.tray_alpha = 1.0;
+        } else {
+            let k = 20.0;
+            let factor = 1.0 - (-k * dt.max(0.0)).exp();
+            self.tray_state.pill_w += (self.tray_state.pill_w_target - self.tray_state.pill_w) * factor;
+            self.tray_state.tray_alpha += (1.0 - self.tray_state.tray_alpha) * factor;
+        }
 
         if single_tile_debug_enabled() {
             let labels: Vec<&str> = tokens.iter().map(|t| t.label.as_str()).collect();
@@ -1250,6 +1274,45 @@ impl eframe::App for App {
         if self.active_tab != settings_window::SettingsTab::Position {
             self.manual_slider_dragging = false;
             self.manual_slider_drag_ended = false;
+        }
+
+        // ── Detect main UI minimize/restore ──
+        let was_minimized = self.ui_minimized;
+        self.ui_minimized = ctx
+            .input(|i| i.viewport().minimized)
+            .unwrap_or(false);
+
+        if self.ui_minimized != was_minimized {
+            if minimize_debug_enabled() {
+                eprintln!(
+                    "[overlay-minimize] UI {} -> {}",
+                    if was_minimized { "minimized" } else { "visible" },
+                    if self.ui_minimized { "minimized" } else { "visible" },
+                );
+            }
+        }
+
+        // When UI is minimized, force-hide overlay and skip rendering it.
+        if self.ui_minimized {
+            let overlay_id = egui::ViewportId::from_hash_of("overlay");
+            ctx.send_viewport_cmd_to(overlay_id, egui::ViewportCommand::Visible(false));
+            if let Some(hwnd) = self.last_hwnd {
+                hide_window(hwnd);
+                if minimize_debug_enabled() && !was_minimized {
+                    eprintln!("[overlay-minimize] overlay hidden (SW_HIDE) hwnd={hwnd:?}");
+                }
+            }
+            self.first_show_done = false;
+            // Slow repaint while minimized — nothing to animate.
+            ctx.request_repaint_after(Duration::from_millis(500));
+            return;
+        }
+
+        // On restore from minimized, log and let normal flow re-show overlay.
+        if was_minimized && !self.ui_minimized {
+            if minimize_debug_enabled() {
+                eprintln!("[overlay-minimize] UI restored; overlay will resume if enabled");
+            }
         }
 
         if self.draft.overlay_enabled {
@@ -1648,7 +1711,9 @@ impl eframe::App for App {
                     now < self.active_until
                 );
             }
-            ctx.request_repaint_after(Duration::from_millis(16));
+            // Use a very short repaint interval while keys are held to ensure
+            // combos appear with minimal latency.
+            ctx.request_repaint_after(Duration::from_millis(8));
         } else {
             ctx.request_repaint_after(Duration::from_millis(250));
         }
@@ -1673,16 +1738,16 @@ pub fn run(
 
     let viewport = if let Some(app_icon) = app_icon {
         egui::ViewportBuilder::default()
-            .with_inner_size([520.0, 600.0])
+            .with_inner_size([740.0, 620.0])
             .with_resizable(true)
-            .with_min_inner_size([420.0, 400.0])
+            .with_min_inner_size([600.0, 450.0])
             .with_transparent(true)
             .with_icon(app_icon)
     } else {
         egui::ViewportBuilder::default()
-            .with_inner_size([520.0, 600.0])
+            .with_inner_size([740.0, 620.0])
             .with_resizable(true)
-            .with_min_inner_size([420.0, 400.0])
+            .with_min_inner_size([600.0, 450.0])
             .with_transparent(true)
     };
 
