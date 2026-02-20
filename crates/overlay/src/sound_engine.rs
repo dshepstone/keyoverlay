@@ -155,8 +155,7 @@ fn gen_soft_click(volume: f32) -> Vec<u8> {
             let pos = i as f32 / num_samples as f32;
             (1.0 - pos).powf(2.0)
         };
-        let wave = (t * freq * std::f32::consts::TAU).sin() * 0.7
-            + ((i as f32 * 7.3).sin() * 0.3);
+        let wave = (t * freq * std::f32::consts::TAU).sin() * 0.7 + ((i as f32 * 7.3).sin() * 0.3);
         let sample = (wave * envelope * volume * 14000.0).clamp(-32000.0, 32000.0) as i16;
         samples.push(sample);
     }
@@ -213,10 +212,10 @@ mod imp {
     use std::thread;
     use std::time::Instant;
 
-    use windows::Win32::Media::Audio::{PlaySoundW, SND_MEMORY, SND_NODEFAULT, SND_SYNC};
     use windows::core::PCWSTR;
+    use windows::Win32::Media::Audio::{PlaySoundW, SND_MEMORY, SND_NODEFAULT, SND_SYNC};
 
-    use super::{SoundPack, SoundSettings, debug_enabled, generate_pack_wav};
+    use super::{debug_enabled, generate_pack_wav, SoundPack, SoundSettings};
 
     /// Commands sent to the dedicated audio thread.
     enum AudioCmd {
@@ -342,9 +341,7 @@ mod imp {
             static LAST_LOG: Mutex<Option<Instant>> = Mutex::new(None);
             if debug_enabled() {
                 let mut last = LAST_LOG.lock().unwrap();
-                let should_log = last
-                    .map(|t| t.elapsed().as_millis() > 200)
-                    .unwrap_or(true);
+                let should_log = last.map(|t| t.elapsed().as_millis() > 200).unwrap_or(true);
                 if should_log {
                     eprintln!("[sound-engine] play keystroke ({} bytes)", wav.len());
                     *last = Some(Instant::now());
@@ -388,9 +385,18 @@ mod tests {
 
     #[test]
     fn sound_pack_from_preset_name() {
-        assert_eq!(SoundPack::from_preset_name("Typewriter"), SoundPack::Typewriter);
-        assert_eq!(SoundPack::from_preset_name("Mechanical"), SoundPack::Mechanical);
-        assert_eq!(SoundPack::from_preset_name("Soft Click"), SoundPack::SoftClick);
+        assert_eq!(
+            SoundPack::from_preset_name("Typewriter"),
+            SoundPack::Typewriter
+        );
+        assert_eq!(
+            SoundPack::from_preset_name("Mechanical"),
+            SoundPack::Mechanical
+        );
+        assert_eq!(
+            SoundPack::from_preset_name("Soft Click"),
+            SoundPack::SoftClick
+        );
         assert_eq!(SoundPack::from_preset_name("Pop"), SoundPack::Pop);
         assert_eq!(SoundPack::from_preset_name("None"), SoundPack::None);
         assert_eq!(SoundPack::from_preset_name("unknown"), SoundPack::None);
@@ -405,7 +411,12 @@ mod tests {
             SoundPack::Pop,
         ] {
             let wav = generate_pack_wav(pack, 0.5);
-            assert!(wav.len() > 44, "{:?} wav too short: {} bytes", pack, wav.len());
+            assert!(
+                wav.len() > 44,
+                "{:?} wav too short: {} bytes",
+                pack,
+                wav.len()
+            );
 
             // Check RIFF header
             assert_eq!(&wav[0..4], b"RIFF", "{:?} missing RIFF", pack);

@@ -82,8 +82,7 @@ mod imp {
     use windows::Win32::UI::WindowsAndMessaging::{
         CreateWindowExW, DestroyWindow, GetCursorPos, IsWindow, SetLayeredWindowAttributes,
         SetWindowPos, ShowWindow, HWND_TOPMOST, LWA_ALPHA, LWA_COLORKEY, SWP_NOACTIVATE,
-        SWP_NOMOVE, SWP_NOOWNERZORDER, SWP_SHOWWINDOW, SW_HIDE, SW_SHOWNOACTIVATE,
-        WINDOW_EX_STYLE,
+        SWP_NOMOVE, SWP_NOOWNERZORDER, SWP_SHOWWINDOW, SW_HIDE, SW_SHOWNOACTIVATE, WINDOW_EX_STYLE,
         WS_EX_LAYERED, WS_EX_NOACTIVATE, WS_EX_TOOLWINDOW, WS_EX_TOPMOST, WS_EX_TRANSPARENT,
         WS_POPUP,
     };
@@ -217,7 +216,9 @@ mod imp {
                 let gg = gg.max(1);
 
                 let glow_color = rgb_to_colorref(gr, gg, gb);
-                let pen_thick = ((settings.thickness_px as f32) * (1.0 - t * 0.5)).round().max(1.0) as i32;
+                let pen_thick = ((settings.thickness_px as f32) * (1.0 - t * 0.5))
+                    .round()
+                    .max(1.0) as i32;
                 let pen = unsafe { CreatePen(PS_SOLID, pen_thick, glow_color) };
                 let old_pen = unsafe { SelectObject(dc, HGDIOBJ(pen.0)) };
                 let hollow = unsafe { GetStockObject(HOLLOW_BRUSH) };
@@ -369,8 +370,7 @@ mod imp {
     fn set_window_alpha(hwnd: HWND, opacity: f32) {
         let alpha = (opacity.clamp(0.2, 1.0) * 255.0).round() as u8;
         unsafe {
-            let _ =
-                SetLayeredWindowAttributes(hwnd, COLORREF(0), alpha, LWA_COLORKEY | LWA_ALPHA);
+            let _ = SetLayeredWindowAttributes(hwnd, COLORREF(0), alpha, LWA_COLORKEY | LWA_ALPHA);
         }
     }
 
@@ -597,10 +597,7 @@ mod imp {
                                 };
                                 let (x, y) = if settings.hotspot_center {
                                     // Centered: circle center = cursor hotspot.
-                                    (
-                                        point.x - (scaled_total / 2),
-                                        point.y - (scaled_total / 2),
-                                    )
+                                    (point.x - (scaled_total / 2), point.y - (scaled_total / 2))
                                 } else {
                                     // Lower-right edge: cursor hotspot sits on the
                                     // circle boundary at 45° down-right from center.

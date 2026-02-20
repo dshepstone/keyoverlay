@@ -22,13 +22,7 @@ const SCALE_PRESETS: &[(f32, &str)] = &[
     (2.0, "200%"),
 ];
 
-const SOUND_PRESETS: &[&str] = &[
-    "Typewriter",
-    "Mechanical",
-    "Soft Click",
-    "Pop",
-    "None",
-];
+const SOUND_PRESETS: &[&str] = &["Typewriter", "Mechanical", "Soft Click", "Pop", "None"];
 
 // ── Colors ──────────────────────────────────────────────────────────────
 
@@ -93,13 +87,13 @@ impl SettingsTab {
 
     fn icon(self) -> &'static str {
         match self {
-            SettingsTab::General => "\u{2699}",     // ⚙
-            SettingsTab::Keystroke => "\u{2328}",   // ⌨
-            SettingsTab::Cursor => "\u{1F5B1}",     // 🖱  (fallback: pointer)
-            SettingsTab::Sounds => "\u{266B}",      // ♫
-            SettingsTab::Position => "\u{2316}",    // ⌖
-            SettingsTab::License => "\u{1F4C4}",    // 📄
-            SettingsTab::About => "\u{2139}",       // ℹ
+            SettingsTab::General => "\u{2699}",   // ⚙
+            SettingsTab::Keystroke => "\u{2328}", // ⌨
+            SettingsTab::Cursor => "\u{1F5B1}",   // 🖱  (fallback: pointer)
+            SettingsTab::Sounds => "\u{266B}",    // ♫
+            SettingsTab::Position => "\u{2316}",  // ⌖
+            SettingsTab::License => "\u{1F4C4}",  // 📄
+            SettingsTab::About => "\u{2139}",     // ℹ
         }
     }
 }
@@ -193,7 +187,11 @@ pub fn draw_settings(ctx: &egui::Context, app: &mut App) {
     ctx.set_visuals(visuals);
 
     egui::CentralPanel::default()
-        .frame(egui::Frame::central_panel(&ctx.style()).fill(MAIN_BG).inner_margin(0.0))
+        .frame(
+            egui::Frame::central_panel(&ctx.style())
+                .fill(MAIN_BG)
+                .inner_margin(0.0),
+        )
         .show(ctx, |ui| {
             reset_command_press_state_if_needed(ui);
             let available = ui.available_rect_before_wrap();
@@ -212,8 +210,10 @@ pub fn draw_settings(ctx: &egui::Context, app: &mut App) {
             ui.painter().rect_filled(sidebar_rect, 0.0, SIDEBAR_BG);
 
             // Sidebar content
-            let mut sidebar_ui =
-                ui.child_ui(sidebar_rect.shrink2(egui::vec2(0.0, 0.0)), egui::Layout::top_down(egui::Align::LEFT));
+            let mut sidebar_ui = ui.child_ui(
+                sidebar_rect.shrink2(egui::vec2(0.0, 0.0)),
+                egui::Layout::top_down(egui::Align::LEFT),
+            );
             draw_sidebar(ctx, &mut sidebar_ui, app);
 
             // ── Main Panel ──
@@ -234,7 +234,10 @@ fn draw_sidebar(ctx: &egui::Context, ui: &mut egui::Ui, app: &mut App) {
     ui.horizontal(|ui| {
         ui.add_space(16.0);
         if let Some(icon_texture) = load_header_icon_texture(ctx) {
-            ui.add(egui::Image::new((icon_texture.id(), egui::vec2(28.0, 28.0))));
+            ui.add(egui::Image::new((
+                icon_texture.id(),
+                egui::vec2(28.0, 28.0),
+            )));
             ui.add_space(8.0);
         }
         ui.label(
@@ -274,17 +277,18 @@ fn draw_sidebar(ctx: &egui::Context, ui: &mut egui::Ui, app: &mut App) {
         if selected {
             ui.painter().rect_filled(item_rect, 0.0, SIDEBAR_ACTIVE_BG);
             // Active indicator bar
-            let bar = egui::Rect::from_min_size(
-                item_rect.min,
-                egui::vec2(3.0, item_rect.height()),
-            );
+            let bar = egui::Rect::from_min_size(item_rect.min, egui::vec2(3.0, item_rect.height()));
             ui.painter().rect_filled(bar, 0.0, ACCENT);
         } else if hovered {
             ui.painter().rect_filled(item_rect, 0.0, SIDEBAR_HOVER_BG);
         }
 
         // Icon + label
-        let text_color = if selected { SIDEBAR_ACTIVE_TEXT } else { SIDEBAR_TEXT };
+        let text_color = if selected {
+            SIDEBAR_ACTIVE_TEXT
+        } else {
+            SIDEBAR_TEXT
+        };
         let text_pos = egui::pos2(item_rect.min.x + 20.0, item_rect.center().y);
         ui.painter().text(
             text_pos,
@@ -312,7 +316,8 @@ fn draw_sidebar(ctx: &egui::Context, ui: &mut egui::Ui, app: &mut App) {
         egui::pos2(ui.min_rect().min.x + 16.0, ui.cursor().min.y),
         egui::vec2(SIDEBAR_WIDTH - 32.0, 1.0),
     );
-    ui.painter().rect_filled(sep_rect, 0.0, egui::Color32::from_rgb(45, 45, 62));
+    ui.painter()
+        .rect_filled(sep_rect, 0.0, egui::Color32::from_rgb(45, 45, 62));
     ui.add_space(12.0);
 
     ui.horizontal(|ui| {
@@ -322,8 +327,7 @@ fn draw_sidebar(ctx: &egui::Context, ui: &mut egui::Ui, app: &mut App) {
         let status_color = if enabled { SUCCESS } else { MUTED_TEXT };
 
         // Pulsing dot
-        let (dot_rect, _) =
-            ui.allocate_exact_size(egui::vec2(10.0, 10.0), egui::Sense::hover());
+        let (dot_rect, _) = ui.allocate_exact_size(egui::vec2(10.0, 10.0), egui::Sense::hover());
         if enabled {
             let pulse = ((ctx.input(|i| i.time) * 2.0).sin() * 0.5 + 0.5) as f32;
             let a = (150.0 + 105.0 * pulse) as u8;
@@ -333,11 +337,16 @@ fn draw_sidebar(ctx: &egui::Context, ui: &mut egui::Ui, app: &mut App) {
                 egui::Color32::from_rgba_unmultiplied(80, 200, 120, a),
             );
         } else {
-            ui.painter().circle_filled(dot_rect.center(), 4.0, MUTED_TEXT);
+            ui.painter()
+                .circle_filled(dot_rect.center(), 4.0, MUTED_TEXT);
         }
 
         ui.add_space(6.0);
-        let status_text = if enabled { "Overlay active" } else { "Overlay off" };
+        let status_text = if enabled {
+            "Overlay active"
+        } else {
+            "Overlay off"
+        };
         ui.label(
             egui::RichText::new(status_text)
                 .color(status_color)
@@ -369,7 +378,10 @@ fn draw_main_panel(_ctx: &egui::Context, ui: &mut egui::Ui, app: &mut App) {
                 ("OFF", BODY_TEXT, TOGGLE_OFF_BG)
             };
             let btn = egui::Button::new(
-                egui::RichText::new(btn_text).color(btn_color).size(12.0).strong(),
+                egui::RichText::new(btn_text)
+                    .color(btn_color)
+                    .size(12.0)
+                    .strong(),
             )
             .fill(btn_bg)
             .rounding(egui::Rounding::same(12.0))
@@ -404,9 +416,7 @@ fn draw_main_panel(_ctx: &egui::Context, ui: &mut egui::Ui, app: &mut App) {
             ui.add_space(16.0);
             if let Some((msg, t)) = &app.status_msg {
                 if t.elapsed().as_secs() < 3 {
-                    ui.label(
-                        egui::RichText::new(msg).color(SUCCESS).size(12.0),
-                    );
+                    ui.label(egui::RichText::new(msg).color(SUCCESS).size(12.0));
                 }
             }
             ui.add_space(8.0);
@@ -473,8 +483,8 @@ fn modern_toggle(ui: &mut egui::Ui, id_str: &str, value: &mut bool) -> bool {
     );
 
     let knob_radius = 8.0;
-    let knob_x = rect.left() + knob_radius + 3.0
-        + anim_t * (rect.width() - 2.0 * knob_radius - 6.0);
+    let knob_x =
+        rect.left() + knob_radius + 3.0 + anim_t * (rect.width() - 2.0 * knob_radius - 6.0);
     let knob_center = egui::pos2(knob_x, rect.center().y);
 
     ui.painter()
@@ -550,7 +560,11 @@ fn tab_general(app: &mut App, ui: &mut egui::Ui) {
     begin_card(ui, "Appearance");
     card_frame(ui, |ui| {
         ui.horizontal(|ui| {
-            ui.label(egui::RichText::new("Color theme").color(BODY_TEXT).size(13.0));
+            ui.label(
+                egui::RichText::new("Color theme")
+                    .color(BODY_TEXT)
+                    .size(13.0),
+            );
             ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
                 for theme in Theme::ALL.iter().rev() {
                     ui.selectable_value(&mut app.draft.theme, *theme, theme.label());
@@ -558,15 +572,45 @@ fn tab_general(app: &mut App, ui: &mut egui::Ui) {
             });
         });
         ui.add_space(4.0);
-        slider_row(ui, "Font size", &mut app.draft.font_size, 10.0..=32.0, " px");
+        slider_row(
+            ui,
+            "Font size",
+            &mut app.draft.font_size,
+            10.0..=32.0,
+            " px",
+        );
         ui.add_space(2.0);
-        slider_row(ui, "Overlay scale", &mut app.draft.overlay_scale, 0.6..=2.0, "x");
+        slider_row(
+            ui,
+            "Overlay scale",
+            &mut app.draft.overlay_scale,
+            0.6..=2.0,
+            "x",
+        );
         ui.add_space(2.0);
-        slider_row(ui, "Content opacity", &mut app.draft.overlay_opacity, 0.1..=1.0, "");
+        slider_row(
+            ui,
+            "Content opacity",
+            &mut app.draft.overlay_opacity,
+            0.1..=1.0,
+            "",
+        );
         ui.add_space(2.0);
-        slider_row(ui, "Background opacity", &mut app.draft.background_opacity, 0.0..=1.0, "");
+        slider_row(
+            ui,
+            "Background opacity",
+            &mut app.draft.background_opacity,
+            0.0..=1.0,
+            "",
+        );
         ui.add_space(2.0);
-        slider_row(ui, "Pill rounding", &mut app.draft.pill_rounding, 0.0..=20.0, " px");
+        slider_row(
+            ui,
+            "Pill rounding",
+            &mut app.draft.pill_rounding,
+            0.0..=20.0,
+            " px",
+        );
     });
 
     if app.draft.theme == Theme::Custom {
@@ -590,7 +634,9 @@ fn tab_general(app: &mut App, ui: &mut egui::Ui) {
     ui.horizontal(|ui| {
         let save_id = egui::Id::new("cmd::save_apply");
         let save_btn = egui::Button::new(
-            egui::RichText::new("Save & Apply").color(egui::Color32::WHITE).size(13.0),
+            egui::RichText::new("Save & Apply")
+                .color(egui::Color32::WHITE)
+                .size(13.0),
         )
         .fill(ACCENT)
         .rounding(egui::Rounding::same(8.0))
@@ -604,7 +650,9 @@ fn tab_general(app: &mut App, ui: &mut egui::Ui) {
 
         let reset_id = egui::Id::new("cmd::reset_defaults");
         let reset_btn = egui::Button::new(
-            egui::RichText::new("Reset Defaults").color(BODY_TEXT).size(13.0),
+            egui::RichText::new("Reset Defaults")
+                .color(BODY_TEXT)
+                .size(13.0),
         )
         .fill(CARD_BG)
         .stroke(egui::Stroke::new(1.0, CARD_BORDER))
@@ -623,15 +671,40 @@ fn tab_keystroke(app: &mut App, ui: &mut egui::Ui) {
     begin_card(ui, "Keystroke Display");
     card_frame(ui, |ui| {
         let mut apply = false;
-        apply |= toggle_row(ui, "toggle_show_keyboard", "Show keyboard strokes", &mut app.draft.show_keyboard);
+        apply |= toggle_row(
+            ui,
+            "toggle_show_keyboard",
+            "Show keyboard strokes",
+            &mut app.draft.show_keyboard,
+        );
         ui.add_space(4.0);
-        apply |= toggle_row(ui, "toggle_show_mouse_clicks", "Show mouse clicks", &mut app.draft.show_mouse_clicks);
+        apply |= toggle_row(
+            ui,
+            "toggle_show_mouse_clicks",
+            "Show mouse clicks",
+            &mut app.draft.show_mouse_clicks,
+        );
         ui.add_space(4.0);
-        apply |= toggle_row(ui, "toggle_show_mouse_text", "Show mouse click text", &mut app.draft.show_mouse_event_text);
+        apply |= toggle_row(
+            ui,
+            "toggle_show_mouse_text",
+            "Show mouse click text",
+            &mut app.draft.show_mouse_event_text,
+        );
         ui.add_space(4.0);
-        apply |= toggle_row(ui, "toggle_show_mouse_icon", "Show mouse icon in overlay", &mut app.draft.show_mouse_icon);
+        apply |= toggle_row(
+            ui,
+            "toggle_show_mouse_icon",
+            "Show mouse icon in overlay",
+            &mut app.draft.show_mouse_icon,
+        );
         ui.add_space(4.0);
-        apply |= toggle_row(ui, "toggle_show_scroll", "Show scroll events", &mut app.draft.show_scroll);
+        apply |= toggle_row(
+            ui,
+            "toggle_show_scroll",
+            "Show scroll events",
+            &mut app.draft.show_scroll,
+        );
         if apply {
             app.apply();
         }
@@ -641,9 +714,21 @@ fn tab_keystroke(app: &mut App, ui: &mut egui::Ui) {
     begin_card(ui, "Timing");
     card_frame(ui, |ui| {
         let mut dirty = false;
-        dirty |= slider_row(ui, "Display duration", &mut app.draft.display_duration_secs, 0.5..=10.0, " s");
+        dirty |= slider_row(
+            ui,
+            "Display duration",
+            &mut app.draft.display_duration_secs,
+            0.5..=10.0,
+            " s",
+        );
         ui.add_space(2.0);
-        dirty |= slider_row(ui, "Fade duration", &mut app.draft.fade_duration_secs, 0.1..=3.0, " s");
+        dirty |= slider_row(
+            ui,
+            "Fade duration",
+            &mut app.draft.fade_duration_secs,
+            0.1..=3.0,
+            " s",
+        );
         ui.add_space(2.0);
         let mut max_vis = app.draft.max_visible_events as i32;
         dirty |= slider_row_i32(ui, "Max visible events", &mut max_vis, 1..=20, "");
@@ -659,7 +744,12 @@ fn tab_keystroke(app: &mut App, ui: &mut egui::Ui) {
 fn tab_cursor(app: &mut App, ui: &mut egui::Ui) {
     begin_card(ui, "Cursor Highlight");
     card_frame(ui, |ui| {
-        if toggle_row(ui, "toggle_cursor_ring", "Enable cursor highlight", &mut app.draft.enable_green_cursor_ring) {
+        if toggle_row(
+            ui,
+            "toggle_cursor_ring",
+            "Enable cursor highlight",
+            &mut app.draft.enable_green_cursor_ring,
+        ) {
             app.apply();
         }
     });
@@ -676,7 +766,8 @@ fn tab_cursor(app: &mut App, ui: &mut egui::Ui) {
                     let c = egui::Color32::from_rgb(color.r, color.g, color.b);
 
                     let desired_size = egui::vec2(48.0, 48.0);
-                    let (rect, response) = ui.allocate_exact_size(desired_size, egui::Sense::click());
+                    let (rect, response) =
+                        ui.allocate_exact_size(desired_size, egui::Sense::click());
 
                     // Outer ring for selection
                     if is_selected {
@@ -721,11 +812,29 @@ fn tab_cursor(app: &mut App, ui: &mut egui::Ui) {
         begin_card(ui, "Settings");
         card_frame(ui, |ui| {
             let mut dirty = false;
-            dirty |= slider_row(ui, "Size", &mut app.draft.cursor_ring_size_px, 24.0..=120.0, " px");
+            dirty |= slider_row(
+                ui,
+                "Size",
+                &mut app.draft.cursor_ring_size_px,
+                24.0..=120.0,
+                " px",
+            );
             ui.add_space(2.0);
-            dirty |= slider_row(ui, "Thickness", &mut app.draft.cursor_ring_thickness_px, 2.0..=12.0, " px");
+            dirty |= slider_row(
+                ui,
+                "Thickness",
+                &mut app.draft.cursor_ring_thickness_px,
+                2.0..=12.0,
+                " px",
+            );
             ui.add_space(2.0);
-            dirty |= slider_row(ui, "Opacity", &mut app.draft.cursor_ring_opacity, 0.2..=1.0, "");
+            dirty |= slider_row(
+                ui,
+                "Opacity",
+                &mut app.draft.cursor_ring_opacity,
+                0.2..=1.0,
+                "",
+            );
             ui.add_space(2.0);
             dirty |= slider_row(ui, "Glow", &mut app.draft.cursor_glow, 0.0..=1.0, "");
             ui.add_space(4.0);
@@ -744,9 +853,19 @@ fn tab_cursor(app: &mut App, ui: &mut egui::Ui) {
                 );
             });
             ui.add_space(4.0);
-            dirty |= toggle_row(ui, "toggle_click_anim", "Enable click animation", &mut app.draft.enable_click_animation);
+            dirty |= toggle_row(
+                ui,
+                "toggle_click_anim",
+                "Enable click animation",
+                &mut app.draft.enable_click_animation,
+            );
             ui.add_space(2.0);
-            dirty |= toggle_row(ui, "toggle_cursor_center", "Center cursor in circle", &mut app.draft.cursor_hotspot_center);
+            dirty |= toggle_row(
+                ui,
+                "toggle_cursor_center",
+                "Center cursor in circle",
+                &mut app.draft.cursor_hotspot_center,
+            );
             ui.horizontal(|ui| {
                 ui.add_space(4.0);
                 let hint = if app.draft.cursor_hotspot_center {
@@ -794,7 +913,11 @@ fn tab_sounds(app: &mut App, ui: &mut egui::Ui) {
         begin_card(ui, "Sound Pack");
         card_frame(ui, |ui| {
             ui.horizontal(|ui| {
-                ui.label(egui::RichText::new("Sound preset").color(BODY_TEXT).size(13.0));
+                ui.label(
+                    egui::RichText::new("Sound preset")
+                        .color(BODY_TEXT)
+                        .size(13.0),
+                );
                 ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
                     egui::ComboBox::from_id_source("sound_preset_combo")
                         .selected_text(&app.draft.sound_preset)
@@ -829,7 +952,11 @@ fn tab_position(app: &mut App, ui: &mut egui::Ui) {
     begin_card(ui, "Display Baseline");
     card_frame(ui, |ui| {
         ui.horizontal(|ui| {
-            ui.label(egui::RichText::new("Display resolution").color(BODY_TEXT).size(13.0));
+            ui.label(
+                egui::RichText::new("Display resolution")
+                    .color(BODY_TEXT)
+                    .size(13.0),
+            );
             ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
                 let selected_resolution = DISPLAY_PRESETS
                     .iter()
@@ -858,7 +985,11 @@ fn tab_position(app: &mut App, ui: &mut egui::Ui) {
         });
         ui.add_space(4.0);
         ui.horizontal(|ui| {
-            ui.label(egui::RichText::new("Display scale").color(BODY_TEXT).size(13.0));
+            ui.label(
+                egui::RichText::new("Display scale")
+                    .color(BODY_TEXT)
+                    .size(13.0),
+            );
             ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
                 let selected_scale = SCALE_PRESETS
                     .iter()
@@ -870,8 +1001,7 @@ fn tab_position(app: &mut App, ui: &mut egui::Ui) {
                     .selected_text(selected_scale)
                     .show_ui(ui, |ui| {
                         for (scale, label) in SCALE_PRESETS {
-                            let selected =
-                                (app.draft.display_scale - *scale).abs() < f32::EPSILON;
+                            let selected = (app.draft.display_scale - *scale).abs() < f32::EPSILON;
                             if ui.selectable_label(selected, *label).clicked() {
                                 app.draft.display_scale = *scale;
                                 scale_changed = true;
@@ -892,7 +1022,11 @@ fn tab_position(app: &mut App, ui: &mut egui::Ui) {
     begin_card(ui, "Screen Position");
     card_frame(ui, |ui| {
         ui.horizontal(|ui| {
-            ui.label(egui::RichText::new("Overlay position").color(BODY_TEXT).size(13.0));
+            ui.label(
+                egui::RichText::new("Overlay position")
+                    .color(BODY_TEXT)
+                    .size(13.0),
+            );
             ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
                 let mut selected_position = app.draft.position;
                 egui::ComboBox::from_id_source("position_combo")
@@ -915,7 +1049,11 @@ fn tab_position(app: &mut App, ui: &mut egui::Ui) {
         });
         ui.add_space(4.0);
         ui.horizontal(|ui| {
-            ui.label(egui::RichText::new("Layout direction").color(BODY_TEXT).size(13.0));
+            ui.label(
+                egui::RichText::new("Layout direction")
+                    .color(BODY_TEXT)
+                    .size(13.0),
+            );
             ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
                 for layout in OverlayLayout::ALL.iter().rev() {
                     let response =
@@ -934,7 +1072,11 @@ fn tab_position(app: &mut App, ui: &mut egui::Ui) {
         let mut dragging_now = false;
 
         ui.horizontal(|ui| {
-            ui.label(egui::RichText::new("X position").color(BODY_TEXT).size(13.0));
+            ui.label(
+                egui::RichText::new("X position")
+                    .color(BODY_TEXT)
+                    .size(13.0),
+            );
             let response =
                 ui.add(egui::Slider::new(&mut app.draft.overlay_x, 0.0..=display_w).suffix(" px"));
             manual_slider_changed |= response.changed();
@@ -942,7 +1084,11 @@ fn tab_position(app: &mut App, ui: &mut egui::Ui) {
         });
         ui.add_space(2.0);
         ui.horizontal(|ui| {
-            ui.label(egui::RichText::new("Y position").color(BODY_TEXT).size(13.0));
+            ui.label(
+                egui::RichText::new("Y position")
+                    .color(BODY_TEXT)
+                    .size(13.0),
+            );
             let response =
                 ui.add(egui::Slider::new(&mut app.draft.overlay_y, 0.0..=display_h).suffix(" px"));
             manual_slider_changed |= response.changed();
@@ -974,7 +1120,9 @@ fn tab_position(app: &mut App, ui: &mut egui::Ui) {
             ui.add_space(4.0);
             let snap_id = egui::Id::new("cmd::snap_manual_position");
             let snap_btn = egui::Button::new(
-                egui::RichText::new("Snap to lower-right").color(BODY_TEXT).size(12.0),
+                egui::RichText::new("Snap to lower-right")
+                    .color(BODY_TEXT)
+                    .size(12.0),
             )
             .fill(CARD_BG)
             .stroke(egui::Stroke::new(1.0, CARD_BORDER))
@@ -991,13 +1139,37 @@ fn tab_position(app: &mut App, ui: &mut egui::Ui) {
     ui.add_space(12.0);
     begin_card(ui, "Margins & Size");
     card_frame(ui, |ui| {
-        position_dirty |= slider_row(ui, "Horizontal margin", &mut app.draft.margin_x, 0.0..=200.0, " px");
+        position_dirty |= slider_row(
+            ui,
+            "Horizontal margin",
+            &mut app.draft.margin_x,
+            0.0..=200.0,
+            " px",
+        );
         ui.add_space(2.0);
-        position_dirty |= slider_row(ui, "Vertical margin", &mut app.draft.margin_y, 0.0..=200.0, " px");
+        position_dirty |= slider_row(
+            ui,
+            "Vertical margin",
+            &mut app.draft.margin_y,
+            0.0..=200.0,
+            " px",
+        );
         ui.add_space(6.0);
-        position_dirty |= slider_row(ui, "Overlay width", &mut app.draft.overlay_width, 100.0..=800.0, " px");
+        position_dirty |= slider_row(
+            ui,
+            "Overlay width",
+            &mut app.draft.overlay_width,
+            100.0..=800.0,
+            " px",
+        );
         ui.add_space(2.0);
-        position_dirty |= slider_row(ui, "Overlay height", &mut app.draft.overlay_height, 60.0..=600.0, " px");
+        position_dirty |= slider_row(
+            ui,
+            "Overlay height",
+            &mut app.draft.overlay_height,
+            60.0..=600.0,
+            " px",
+        );
     });
 
     if position_dirty {
@@ -1030,7 +1202,7 @@ fn tab_license(ui: &mut egui::Ui) {
                  copies or substantial portions of the Software.\n\n\
                  THE SOFTWARE IS PROVIDED \"AS IS\", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR \
                  IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY, \
-                 FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT."
+                 FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT.",
             )
             .color(BODY_TEXT)
             .size(11.0),
@@ -1049,7 +1221,11 @@ fn tab_about(ui: &mut egui::Ui) {
                 .size(14.0),
         );
         ui.add_space(8.0);
-        ui.label(egui::RichText::new("Version 0.2.0").color(MUTED_TEXT).size(13.0));
+        ui.label(
+            egui::RichText::new("Version 0.2.0")
+                .color(MUTED_TEXT)
+                .size(13.0),
+        );
     });
 
     ui.add_space(12.0);
@@ -1068,11 +1244,7 @@ fn tab_about(ui: &mut egui::Ui) {
         ];
         for feat in features {
             ui.horizontal(|ui| {
-                ui.label(
-                    egui::RichText::new("\u{2022}")
-                        .size(13.0)
-                        .color(ACCENT),
-                );
+                ui.label(egui::RichText::new("\u{2022}").size(13.0).color(ACCENT));
                 ui.label(egui::RichText::new(feat).size(13.0).color(BODY_TEXT));
             });
         }

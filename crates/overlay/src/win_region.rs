@@ -34,8 +34,8 @@ mod imp {
         FindWindowW, GetClassNameW, GetClientRect, GetForegroundWindow, GetWindowLongPtrW,
         GetWindowRect, GetWindowTextW, GetWindowThreadProcessId, IsWindow, IsWindowVisible,
         SetWindowLongPtrW, SetWindowPos, ShowWindow, GWL_EXSTYLE, GWL_STYLE, SWP_NOACTIVATE,
-        SWP_NOMOVE, SWP_NOSENDCHANGING, SWP_NOSIZE, SWP_NOZORDER, SWP_SHOWWINDOW,
-        SW_HIDE, SW_RESTORE, SW_SHOWNOACTIVATE,
+        SWP_NOMOVE, SWP_NOSENDCHANGING, SWP_NOSIZE, SWP_NOZORDER, SWP_SHOWWINDOW, SW_HIDE,
+        SW_RESTORE, SW_SHOWNOACTIVATE,
     };
 
     use crate::overlay_startup_diagnostics;
@@ -341,8 +341,7 @@ mod imp {
                 y,
                 0,
                 0,
-                SWP_NOSIZE | SWP_NOZORDER | SWP_NOACTIVATE | SWP_NOSENDCHANGING
-                    | SWP_SHOWWINDOW,
+                SWP_NOSIZE | SWP_NOZORDER | SWP_NOACTIVATE | SWP_NOSENDCHANGING | SWP_SHOWWINDOW,
             )
         };
         let _ = unsafe { ShowWindow(hwnd, SW_SHOWNOACTIVATE) };
