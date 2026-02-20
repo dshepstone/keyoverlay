@@ -208,26 +208,35 @@ fn debug_enabled() -> bool {
 
 #[cfg(target_os = "windows")]
 mod imp {
-    use std::sync::atomic::{AtomicBool, Ordering};
-    use std::sync::{Arc, Mutex, OnceLock};
+    use std::sync::mpsc;
+    use std::sync::{Arc, Mutex};
     use std::thread;
     use std::time::Instant;
 
-    use windows::Win32::Media::Audio::{PlaySoundW, SND_ASYNC, SND_MEMORY, SND_NODEFAULT};
+    use windows::Win32::Media::Audio::{PlaySoundW, SND_MEMORY, SND_NODEFAULT, SND_SYNC};
     use windows::core::PCWSTR;
 
     use super::{SoundPack, SoundSettings, debug_enabled, generate_pack_wav};
 
+    /// Commands sent to the dedicated audio thread.
+    enum AudioCmd {
+        /// Play the given WAV data synchronously.
+        Play(Arc<Vec<u8>>),
+        /// Shut down the audio thread.
+        Stop,
+    }
+
     struct EngineState {
         settings: SoundSettings,
-        /// Cached WAV data for current pack + volume.
-        cached_wav: Vec<u8>,
+        /// Cached WAV data for current pack + volume (shared with audio thread).
+        cached_wav: Arc<Vec<u8>>,
         cached_pack: SoundPack,
         cached_volume_quantized: u8,
     }
 
     pub struct SoundEngine {
-        state: Arc<Mutex<EngineState>>,
+        state: Mutex<EngineState>,
+        audio_tx: mpsc::Sender<AudioCmd>,
     }
 
     impl SoundEngine {
@@ -237,26 +246,74 @@ mod imp {
             } else {
                 Vec::new()
             };
-            let engine = Self {
-                state: Arc::new(Mutex::new(EngineState {
+
+            let (tx, rx) = mpsc::channel::<AudioCmd>();
+
+            // Dedicated audio thread — stays alive for the lifetime of the engine.
+            // Receives Play commands and calls PlaySoundW with SND_SYNC so each
+            // sound plays to completion.  Short sounds (15-30 ms) finish quickly;
+            // if keystrokes arrive faster, intermediate sounds are skipped by
+            // draining the channel to the most recent command.
+            thread::Builder::new()
+                .name("sound-engine".into())
+                .spawn(move || {
+                    if debug_enabled() {
+                        eprintln!("[sound-engine] audio thread started");
+                    }
+                    loop {
+                        // Block until a command arrives.
+                        let cmd = match rx.recv() {
+                            Ok(cmd) => cmd,
+                            Err(_) => break, // channel closed
+                        };
+
+                        // Drain to the newest Play command so we don't queue up
+                        // a backlog of sounds during fast typing.
+                        let cmd = rx.try_iter().fold(cmd, |_prev, newer| newer);
+
+                        match cmd {
+                            AudioCmd::Play(wav_data) => {
+                                // SAFETY: PlaySoundW with SND_MEMORY interprets
+                                // the first parameter as a pointer to WAV data.
+                                // SND_SYNC blocks until playback is complete.
+                                unsafe {
+                                    let _ = PlaySoundW(
+                                        PCWSTR(wav_data.as_ptr() as *const u16),
+                                        None,
+                                        SND_MEMORY | SND_SYNC | SND_NODEFAULT,
+                                    );
+                                }
+                            }
+                            AudioCmd::Stop => break,
+                        }
+                    }
+                    if debug_enabled() {
+                        eprintln!("[sound-engine] audio thread stopped");
+                    }
+                })
+                .expect("failed to spawn sound-engine thread");
+
+            Self {
+                state: Mutex::new(EngineState {
                     settings: initial,
-                    cached_wav: wav,
+                    cached_wav: Arc::new(wav),
                     cached_pack: initial.pack,
                     cached_volume_quantized: (initial.volume * 20.0).round() as u8,
-                })),
-            };
-            engine
+                }),
+                audio_tx: tx,
+            }
         }
 
         pub fn update_settings(&self, settings: SoundSettings) {
             let mut state = self.state.lock().unwrap();
             let vol_q = (settings.volume * 20.0).round() as u8;
             if state.cached_pack != settings.pack || state.cached_volume_quantized != vol_q {
-                state.cached_wav = if settings.enabled && settings.pack != SoundPack::None {
+                let wav = if settings.enabled && settings.pack != SoundPack::None {
                     generate_pack_wav(settings.pack, settings.volume)
                 } else {
                     Vec::new()
                 };
+                state.cached_wav = Arc::new(wav);
                 state.cached_pack = settings.pack;
                 state.cached_volume_quantized = vol_q;
                 if debug_enabled() {
@@ -278,8 +335,7 @@ mod imp {
                 return;
             }
 
-            // Clone the WAV data so we can release the lock before playing
-            let wav_data = state.cached_wav.clone();
+            let wav = Arc::clone(&state.cached_wav);
             drop(state);
 
             // Throttle logging
@@ -290,25 +346,19 @@ mod imp {
                     .map(|t| t.elapsed().as_millis() > 200)
                     .unwrap_or(true);
                 if should_log {
-                    eprintln!("[sound-engine] play keystroke ({} bytes)", wav_data.len());
+                    eprintln!("[sound-engine] play keystroke ({} bytes)", wav.len());
                     *last = Some(Instant::now());
                 }
             }
 
-            // Play asynchronously on a short-lived thread to avoid blocking input
-            thread::spawn(move || {
-                // SAFETY: PlaySoundW with SND_MEMORY reads from the provided buffer.
-                // We keep `wav_data` alive for the duration of the call. SND_ASYNC
-                // returns immediately but Windows copies the data internally when
-                // SND_MEMORY is used.
-                unsafe {
-                    let _ = PlaySoundW(
-                        PCWSTR(wav_data.as_ptr() as *const u16),
-                        None,
-                        SND_MEMORY | SND_ASYNC | SND_NODEFAULT,
-                    );
-                }
-            });
+            // Send to the audio thread — non-blocking for the caller.
+            let _ = self.audio_tx.send(AudioCmd::Play(wav));
+        }
+    }
+
+    impl Drop for SoundEngine {
+        fn drop(&mut self) {
+            let _ = self.audio_tx.send(AudioCmd::Stop);
         }
     }
 }

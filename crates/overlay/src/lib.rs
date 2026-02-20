@@ -542,8 +542,11 @@ struct App {
     active_until: Instant,
     cursor_ring: CursorRingController,
     sound_engine: SoundEngine,
-    /// Track whether the main UI window is minimized (for logging only; overlay stays visible).
+    /// Track whether the main UI window is minimized.
     ui_minimized: bool,
+    /// True when the window is hidden (un-minimized + invisible) to keep the
+    /// rendering pipeline alive while the user thinks it is minimized.
+    ui_hidden: bool,
     /// Previous token count for detecting token changes (combo delay fix).
     prev_token_count: usize,
 }
@@ -607,6 +610,7 @@ impl App {
             cursor_ring: CursorRingController::new(cursor_ring_settings),
             sound_engine: SoundEngine::new(sound_settings),
             ui_minimized: false,
+            ui_hidden: false,
             prev_token_count: 0,
         }
     }
@@ -1299,20 +1303,50 @@ impl eframe::App for App {
             self.manual_slider_drag_ended = false;
         }
 
-        // ── Detect main UI minimize/restore (for logging only) ──
-        // The overlay must remain visible and functional even when the settings
-        // UI window is minimized — users expect the overlay to keep working.
+        // ── Detect main UI minimize/restore ──
+        // When the settings window is minimized on Windows, the wgpu surface
+        // becomes outdated (zero-size) and the rendering pipeline stops calling
+        // show_viewport_immediate for the overlay.  To keep the overlay alive we
+        // intercept the minimize: immediately un-minimize the window and hide it
+        // instead (Visible(false)).  A hidden-but-restored window keeps the
+        // event loop and rendering pipeline running so the overlay viewport
+        // continues to receive frames.
         let was_minimized = self.ui_minimized;
         self.ui_minimized = ctx
             .input(|i| i.viewport().minimized)
             .unwrap_or(false);
 
-        if self.ui_minimized != was_minimized && minimize_debug_enabled() {
-            eprintln!(
-                "[overlay-minimize] UI {} -> {} (overlay stays active)",
-                if was_minimized { "minimized" } else { "visible" },
-                if self.ui_minimized { "minimized" } else { "visible" },
-            );
+        if self.ui_minimized && !was_minimized {
+            // Just became minimized — restore and hide instead so the overlay
+            // rendering pipeline stays alive.
+            ctx.send_viewport_cmd(egui::ViewportCommand::Minimized(false));
+            ctx.send_viewport_cmd(egui::ViewportCommand::Visible(false));
+            self.ui_hidden = true;
+            if minimize_debug_enabled() {
+                eprintln!(
+                    "[overlay-minimize] UI minimized -> hidden (overlay stays active)",
+                );
+            }
+        } else if !self.ui_minimized && was_minimized {
+            if minimize_debug_enabled() {
+                eprintln!(
+                    "[overlay-minimize] UI restored",
+                );
+            }
+        }
+
+        // When the user clicks the taskbar icon of a hidden window, the OS
+        // delivers a restore/focus event.  Detect this and make the window
+        // visible again.
+        if self.ui_hidden && !self.ui_minimized {
+            let has_focus = ctx.input(|i| i.viewport().focused).unwrap_or(false);
+            if has_focus {
+                ctx.send_viewport_cmd(egui::ViewportCommand::Visible(true));
+                self.ui_hidden = false;
+                if minimize_debug_enabled() {
+                    eprintln!("[overlay-minimize] UI un-hidden (focus restored)");
+                }
+            }
         }
 
         if self.draft.overlay_enabled {
@@ -1714,6 +1748,10 @@ impl eframe::App for App {
             // Use a very short repaint interval while keys are held to ensure
             // combos appear with minimal latency.
             ctx.request_repaint_after(Duration::from_millis(8));
+        } else if self.ui_hidden {
+            // Window is hidden (pseudo-minimized) — keep the event loop ticking
+            // at a moderate rate so the overlay viewport stays responsive.
+            ctx.request_repaint_after(Duration::from_millis(16));
         } else {
             ctx.request_repaint_after(Duration::from_millis(250));
         }
