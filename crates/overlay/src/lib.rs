@@ -10,8 +10,6 @@ use std::collections::{HashMap, HashSet};
 use std::env;
 use std::sync::mpsc::Receiver;
 use std::sync::{Mutex, OnceLock};
-#[cfg(target_os = "windows")]
-use std::thread;
 use std::time::{Duration, Instant};
 
 use anyhow::Result;
@@ -28,8 +26,6 @@ use win_region::{
     find_hwnd_by_title, force_redraw, hwnd_is_valid, is_foreground_window, show_window_no_activate,
     snapshot_hwnd_state, OverlayHwnd, PillRect,
 };
-#[cfg(target_os = "windows")]
-use win_region::{is_window_minimized, restore_window};
 
 const OVERLAY_VIEWPORT_TITLE: &str = "KeyOverlayOverlay";
 const LARGE_KEY_FONT_BOOST: f32 = 14.0;
@@ -1367,28 +1363,13 @@ impl eframe::App for App {
         }
 
         // ── Detect main UI minimize/restore ──
-        // When the settings window is minimized on Windows, the wgpu surface
-        // becomes outdated (zero-size) and the rendering pipeline stops calling
-        // show_viewport_immediate for the overlay.  To keep the overlay alive we
-        // intercept the minimize and immediately un-minimize the window.
-        // Important: do NOT hide the settings window here; hiding removes the
-        // taskbar affordance and users can't reopen it by clicking the app icon.
-        // Keeping it restored avoids the zero-sized/outdated surface state
-        // while preserving normal taskbar behavior.
         let was_minimized = self.ui_minimized;
         self.ui_minimized = ctx.input(|i| i.viewport().minimized).unwrap_or(false);
-
-        if self.ui_minimized && !was_minimized {
-            // Just became minimized — restore immediately so the shared wgpu
-            // renderer doesn't get stuck on a 0x0/outdated root surface.
-            ctx.send_viewport_cmd(egui::ViewportCommand::Minimized(false));
-            if minimize_debug_enabled() {
-                eprintln!("[overlay-minimize] UI minimized -> auto-restored (taskbar remains)");
-            }
-        } else if !self.ui_minimized && was_minimized {
-            if minimize_debug_enabled() {
-                eprintln!("[overlay-minimize] UI restored",);
-            }
+        if self.ui_minimized != was_minimized && minimize_debug_enabled() {
+            eprintln!(
+                "[overlay-minimize] UI minimized state -> {}",
+                self.ui_minimized
+            );
         }
 
         if self.draft.overlay_enabled {
@@ -1626,7 +1607,7 @@ impl eframe::App for App {
                 }
 
                 let tray_alpha = self.tray_state.tray_alpha;
-                ctx.show_viewport_immediate(
+                ctx.show_viewport_deferred(
                     overlay_id,
                     egui::ViewportBuilder::default()
                         .with_inner_size([geometry.width_points, geometry.height_points])
@@ -1770,6 +1751,11 @@ impl eframe::App for App {
                                     }
                                 }
                             });
+
+                        // Deferred viewport mode decouples overlay repainting
+                        // from the root/settings viewport. Keep this viewport
+                        // ticking independently.
+                        ctx.request_repaint_after(Duration::from_millis(16));
                     },
                 );
 
@@ -1812,36 +1798,6 @@ impl eframe::App for App {
     }
 }
 
-#[cfg(target_os = "windows")]
-fn start_windows_minimize_watchdog() {
-    // Root cause: eframe/egui share one wgpu painter across all viewports.
-    // If the settings window enters a real Win32 iconic/minimized state, winit
-    // can emit 0x0 resize + outdated surface for that viewport, and paint for
-    // the frame bails out for it. Keeping the settings window out of iconic
-    // state avoids repeated surface invalidation while the overlay viewport
-    // keeps repainting.
-    thread::spawn(|| {
-        let ui_title = "KeyOverlay".to_string();
-        loop {
-            if let Some(hwnd) = find_hwnd_by_title(&ui_title) {
-                if is_window_minimized(hwnd) {
-                    if minimize_debug_enabled() {
-                        eprintln!(
-                            "[overlay-minimize] watchdog detected iconic settings window; restoring"
-                        );
-                    }
-                    restore_window(hwnd);
-                    request_external_repaint();
-                }
-            }
-            thread::sleep(Duration::from_millis(50));
-        }
-    });
-}
-
-#[cfg(not(target_os = "windows"))]
-fn start_windows_minimize_watchdog() {}
-
 impl Drop for App {
     fn drop(&mut self) {
         self.cursor_ring.shutdown();
@@ -1877,8 +1833,6 @@ pub fn run(
         viewport,
         ..Default::default()
     };
-
-    start_windows_minimize_watchdog();
 
     eframe::run_native(
         "KeyOverlay",
