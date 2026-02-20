@@ -23,7 +23,7 @@ pub struct CursorRingSettings {
     pub click_accent_g: u8,
     pub click_accent_b: u8,
     /// When true, the cursor hotspot is at the center of the circle.
-    /// When false, the cursor hotspot sits on the lower-right edge of the circle
+    /// When false, the cursor hotspot is anchored to the circle's bottom-right edge
     /// (circle shifts up-left from the arrow tip).
     pub hotspot_center: bool,
 }
@@ -199,7 +199,9 @@ mod imp {
                 let gg = gg.max(1);
 
                 let glow_color = rgb_to_colorref(gr, gg, gb);
-                let pen_thick = ((settings.thickness_px as f32) * (1.0 - t * 0.5)).round().max(1.0) as i32;
+                let pen_thick = ((settings.thickness_px as f32) * (1.0 - t * 0.5))
+                    .round()
+                    .max(1.0) as i32;
                 let pen = unsafe { CreatePen(PS_SOLID, pen_thick, glow_color) };
                 let old_pen = unsafe { SelectObject(dc, HGDIOBJ(pen.0)) };
                 let hollow = unsafe { GetStockObject(HOLLOW_BRUSH) };
@@ -307,9 +309,37 @@ mod imp {
     fn set_window_alpha(hwnd: HWND, opacity: f32) {
         let alpha = (opacity.clamp(0.2, 1.0) * 255.0).round() as u8;
         unsafe {
-            let _ =
-                SetLayeredWindowAttributes(hwnd, COLORREF(0), alpha, LWA_COLORKEY | LWA_ALPHA);
+            let _ = SetLayeredWindowAttributes(hwnd, COLORREF(0), alpha, LWA_COLORKEY | LWA_ALPHA);
         }
+    }
+    fn get_active_origin(mouse_pos: (f32, f32), size: f32, is_centered: bool) -> (f32, f32) {
+        let (mx, my) = mouse_pos;
+        if is_centered {
+            // Cursor tip at center of the circle.
+            let half = size * 0.5;
+            (mx - half, my - half)
+        } else {
+            // Cursor tip anchored at the circle's bottom-right edge.
+            (mx - size, my - size)
+        }
+    }
+
+    fn get_window_origin_from_draw_origin(
+        draw_origin: (f32, f32),
+        diameter_px: i32,
+        total_size_px: i32,
+    ) -> (i32, i32) {
+        let margin = (total_size_px - diameter_px).max(0) / 2;
+        (
+            draw_origin.0.round() as i32 - margin,
+            draw_origin.1.round() as i32 - margin,
+        )
+    }
+
+    #[derive(Clone, Copy, Debug)]
+    struct ActiveClickAnimation {
+        started_at: Instant,
+        origin: (f32, f32),
     }
 
     /// Internal shared state between controller and render thread.
@@ -359,7 +389,7 @@ mod imp {
                 };
 
                 // Click animation state
-                let mut click_anim_start: Option<Instant> = None;
+                let mut active_click_animation: Option<ActiveClickAnimation> = None;
                 const CLICK_ANIM_DURATION_MS: f32 = 160.0;
 
                 // Throttle debug logging
@@ -374,19 +404,11 @@ mod imp {
                         (s, click)
                     };
 
-                    // Handle click animation trigger
-                    if pending_click && settings.click_animation {
-                        click_anim_start = Some(Instant::now());
-                        if debug_enabled() {
-                            eprintln!("[cursor-ring] click animation triggered");
-                        }
-                    }
-
                     // Calculate click expand factor (0..1)
-                    let click_expand = if let Some(start) = click_anim_start {
-                        let elapsed_ms = start.elapsed().as_secs_f32() * 1000.0;
+                    let click_expand = if let Some(anim) = active_click_animation {
+                        let elapsed_ms = anim.started_at.elapsed().as_secs_f32() * 1000.0;
                         if elapsed_ms >= CLICK_ANIM_DURATION_MS {
-                            click_anim_start = None;
+                            active_click_animation = None;
                             0.0
                         } else {
                             let t = elapsed_ms / CLICK_ANIM_DURATION_MS;
@@ -427,50 +449,68 @@ mod imp {
                         let settings_changed = settings != last_settings;
                         let needs_redraw = settings_changed || click_expand > 0.01;
 
-                        if needs_redraw {
-                            let dpi_scale = scale_for_dpi(window);
-                            let glow_margin = if settings.glow > 0.0 {
-                                (settings.diameter_px as f32 * settings.glow * 0.5).round() as i32
-                            } else {
-                                0
-                            };
-                            let expand_margin = if settings.click_animation {
-                                (settings.diameter_px as f32 * 0.3).round() as i32
-                            } else {
-                                0
-                            };
-                            let total_size_base =
-                                settings.diameter_px + glow_margin * 2 + expand_margin * 2;
-                            let scaled_total =
-                                (total_size_base as f32 * dpi_scale).round() as i32;
-                            unsafe {
-                                let _ = SetWindowPos(
-                                    window,
-                                    HWND_TOPMOST,
-                                    0,
-                                    0,
-                                    scaled_total,
-                                    scaled_total,
-                                    SWP_NOACTIVATE | SWP_NOOWNERZORDER | SWP_SHOWWINDOW,
-                                );
-                                ShowWindow(window, SW_SHOWNOACTIVATE);
-                            }
-                            set_window_alpha(window, settings.opacity);
-                            // Draw with scaled pixel dimensions
-                            let scaled_settings = CursorRingSettings {
-                                diameter_px: (settings.diameter_px as f32 * dpi_scale).round()
-                                    as i32,
-                                thickness_px: (settings.thickness_px as f32 * dpi_scale).round()
-                                    as i32,
-                                ..settings
-                            };
-                            draw_highlight(window, &scaled_settings, click_expand);
-                            last_settings = settings;
-                        }
-
                         // Track cursor position
                         let mut point = POINT::default();
                         if unsafe { GetCursorPos(&mut point) }.is_ok() {
+                            if needs_redraw {
+                                let dpi_scale = scale_for_dpi(window);
+                                let glow_margin = if settings.glow > 0.0 {
+                                    (settings.diameter_px as f32 * settings.glow * 0.5).round()
+                                        as i32
+                                } else {
+                                    0
+                                };
+                                let expand_margin = if settings.click_animation {
+                                    (settings.diameter_px as f32 * 0.3).round() as i32
+                                } else {
+                                    0
+                                };
+                                let total_size_base =
+                                    settings.diameter_px + glow_margin * 2 + expand_margin * 2;
+                                let scaled_total =
+                                    (total_size_base as f32 * dpi_scale).round() as i32;
+                                let scaled_diameter =
+                                    (settings.diameter_px as f32 * dpi_scale).round() as i32;
+                                let current_origin = get_active_origin(
+                                    (point.x as f32, point.y as f32),
+                                    scaled_diameter.max(1) as f32,
+                                    settings.hotspot_center,
+                                );
+                                if let Some(anim) = active_click_animation.as_mut() {
+                                    // Keep active pulse aligned with current cursor mode/position.
+                                    anim.origin = current_origin;
+                                }
+                                let draw_origin = active_click_animation
+                                    .map(|anim| anim.origin)
+                                    .unwrap_or(current_origin);
+                                let (x, y) = get_window_origin_from_draw_origin(
+                                    draw_origin,
+                                    scaled_diameter,
+                                    scaled_total,
+                                );
+                                unsafe {
+                                    let _ = SetWindowPos(
+                                        window,
+                                        HWND_TOPMOST,
+                                        x,
+                                        y,
+                                        scaled_total,
+                                        scaled_total,
+                                        SWP_NOACTIVATE | SWP_NOOWNERZORDER | SWP_SHOWWINDOW,
+                                    );
+                                    ShowWindow(window, SW_SHOWNOACTIVATE);
+                                }
+                                set_window_alpha(window, settings.opacity);
+                                // Draw with scaled pixel dimensions
+                                let scaled_settings = CursorRingSettings {
+                                    diameter_px: scaled_diameter,
+                                    thickness_px: (settings.thickness_px as f32 * dpi_scale).round()
+                                        as i32,
+                                    ..settings
+                                };
+                                draw_highlight(window, &scaled_settings, click_expand);
+                                last_settings = settings;
+                            }
                             let moved = last_cursor != Some((point.x, point.y));
                             let due = last_move.elapsed() >= Duration::from_millis(12);
 
@@ -496,6 +536,27 @@ mod imp {
                                 }
                                 if debug_enabled() {
                                     eprintln!("[cursor-ring] shown (click while idle)");
+                                }
+                            }
+
+                            if pending_click && settings.click_animation {
+                                let dpi_scale = scale_for_dpi(window);
+                                let scaled_diameter =
+                                    (settings.diameter_px as f32 * dpi_scale).round() as i32;
+                                let origin = get_active_origin(
+                                    (point.x as f32, point.y as f32),
+                                    scaled_diameter.max(1) as f32,
+                                    settings.hotspot_center,
+                                );
+                                active_click_animation = Some(ActiveClickAnimation {
+                                    started_at: Instant::now(),
+                                    origin,
+                                });
+                                if debug_enabled() {
+                                    eprintln!(
+                                        "[cursor-ring] click animation spawned origin=({:.1},{:.1})",
+                                        origin.0, origin.1
+                                    );
                                 }
                             }
 
@@ -534,25 +595,25 @@ mod imp {
                                     settings.diameter_px + glow_margin * 2 + expand_margin * 2;
                                 let scaled_total =
                                     (total_size_base as f32 * dpi_scale).round() as i32;
-                                let (x, y) = if settings.hotspot_center {
-                                    // Centered: circle center = cursor hotspot.
-                                    (
-                                        point.x - (scaled_total / 2),
-                                        point.y - (scaled_total / 2),
-                                    )
-                                } else {
-                                    // Lower-right edge: cursor hotspot sits on the
-                                    // circle boundary at 45° down-right from center.
-                                    // d = normalize(1,1) = (1/√2, 1/√2).
-                                    // circle_center = hotspot - d * r
-                                    // window_pos = circle_center - scaled_total/2
-                                    let r = settings.diameter_px as f32 * dpi_scale * 0.5;
-                                    let offset = (r * std::f32::consts::FRAC_1_SQRT_2).round() as i32;
-                                    (
-                                        point.x - offset - (scaled_total / 2),
-                                        point.y - offset - (scaled_total / 2),
-                                    )
-                                };
+                                let scaled_diameter =
+                                    (settings.diameter_px as f32 * dpi_scale).round() as i32;
+                                let current_origin = get_active_origin(
+                                    (point.x as f32, point.y as f32),
+                                    scaled_diameter.max(1) as f32,
+                                    settings.hotspot_center,
+                                );
+                                if let Some(anim) = active_click_animation.as_mut() {
+                                    // Keep active pulse aligned with current cursor mode/position.
+                                    anim.origin = current_origin;
+                                }
+                                let draw_origin = active_click_animation
+                                    .map(|anim| anim.origin)
+                                    .unwrap_or(current_origin);
+                                let (x, y) = get_window_origin_from_draw_origin(
+                                    draw_origin,
+                                    scaled_diameter,
+                                    scaled_total,
+                                );
                                 unsafe {
                                     let _ = SetWindowPos(
                                         window,
@@ -568,11 +629,14 @@ mod imp {
                                     && moved
                                     && last_debug_log.elapsed() >= Duration::from_millis(500)
                                 {
-                                    let mode = if settings.hotspot_center { "centered" } else { "lower-right-edge" };
-                                    let r = settings.diameter_px as f32 * dpi_scale * 0.5;
+                                    let mode = if settings.hotspot_center {
+                                        "centered"
+                                    } else {
+                                        "bottom-right-edge"
+                                    };
                                     eprintln!(
-                                        "[cursor-ring] mode={} hotspot=({},{}) r={:.1} window=({},{}) total_size={}",
-                                        mode, point.x, point.y, r, x, y, scaled_total
+                                        "[cursor-ring] mode={} hotspot=({},{}) diameter={} window=({},{}) total_size={}",
+                                        mode, point.x, point.y, scaled_diameter, x, y, scaled_total
                                     );
                                     last_debug_log = Instant::now();
                                 }
@@ -583,7 +647,7 @@ mod imp {
                     }
 
                     // Faster loop during click animation for smooth rendering
-                    if click_anim_start.is_some() {
+                    if active_click_animation.is_some() {
                         thread::sleep(Duration::from_millis(4));
                     } else {
                         thread::sleep(Duration::from_millis(8));

@@ -319,8 +319,8 @@ pub struct AppConfig {
     #[serde(default)]
     pub enable_click_animation: bool,
     /// When true, the cursor hotspot (arrow tip) is at the center of the circle.
-    /// When false, the cursor hotspot sits on the lower-right edge of the circle
-    /// (the circle shifts up-left from the arrow tip at 45°).
+    /// When false, the cursor hotspot is anchored to the circle's bottom-right edge
+    /// (the circle shifts up-left from the arrow tip).
     #[serde(default = "default_cursor_hotspot_center")]
     pub cursor_hotspot_center: bool,
 
@@ -544,7 +544,10 @@ mod tests {
         assert_eq!(CursorTheme::RedDot.desc().shape, CursorShape::FilledDot);
         assert_eq!(CursorTheme::YellowPulse.desc().shape, CursorShape::Ring);
         assert_eq!(CursorTheme::PurpleHaze.desc().shape, CursorShape::Ring);
-        assert_eq!(CursorTheme::WhiteCircle.desc().shape, CursorShape::FilledDot);
+        assert_eq!(
+            CursorTheme::WhiteCircle.desc().shape,
+            CursorShape::FilledDot
+        );
     }
 
     #[test]
@@ -554,7 +557,9 @@ mod tests {
         // BlueGlow has glow
         assert!(CursorTheme::BlueGlow.desc().default_glow > 0.0);
         // PurpleHaze has the most glow
-        assert!(CursorTheme::PurpleHaze.desc().default_glow > CursorTheme::BlueGlow.desc().default_glow);
+        assert!(
+            CursorTheme::PurpleHaze.desc().default_glow > CursorTheme::BlueGlow.desc().default_glow
+        );
     }
 
     #[test]
