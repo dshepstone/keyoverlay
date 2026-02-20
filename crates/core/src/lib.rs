@@ -133,6 +133,24 @@ pub enum CursorTheme {
     WhiteCircle,
 }
 
+/// Whether a cursor theme renders as a ring (stroke) or filled circle.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum CursorShape {
+    Ring,
+    FilledDot,
+}
+
+/// Full rendering description for a cursor theme.
+#[derive(Debug, Clone, Copy)]
+pub struct CursorThemeDesc {
+    pub base_color: Color,
+    pub shape: CursorShape,
+    /// Default glow intensity (0 = none, >0 = soft outer glow).
+    pub default_glow: f32,
+    /// Accent color used for click animation "pop".
+    pub click_accent: Color,
+}
+
 impl CursorTheme {
     pub const ALL: [CursorTheme; 6] = [
         CursorTheme::GreenRing,
@@ -155,13 +173,48 @@ impl CursorTheme {
     }
 
     pub fn color(self) -> Color {
+        self.desc().base_color
+    }
+
+    /// Full rendering descriptor for this theme.
+    pub fn desc(self) -> CursorThemeDesc {
         match self {
-            CursorTheme::GreenRing => Color::rgb(100, 220, 100),
-            CursorTheme::BlueGlow => Color::rgb(80, 160, 255),
-            CursorTheme::RedDot => Color::rgb(240, 60, 60),
-            CursorTheme::YellowPulse => Color::rgb(255, 210, 60),
-            CursorTheme::PurpleHaze => Color::rgb(180, 100, 255),
-            CursorTheme::WhiteCircle => Color::rgb(240, 240, 240),
+            CursorTheme::GreenRing => CursorThemeDesc {
+                base_color: Color::rgb(100, 220, 100),
+                shape: CursorShape::Ring,
+                default_glow: 0.0,
+                click_accent: Color::rgb(180, 255, 180),
+            },
+            CursorTheme::BlueGlow => CursorThemeDesc {
+                base_color: Color::rgb(80, 160, 255),
+                shape: CursorShape::Ring,
+                default_glow: 0.4,
+                click_accent: Color::rgb(160, 210, 255),
+            },
+            CursorTheme::RedDot => CursorThemeDesc {
+                base_color: Color::rgb(240, 60, 60),
+                shape: CursorShape::FilledDot,
+                default_glow: 0.0,
+                click_accent: Color::rgb(255, 140, 140),
+            },
+            CursorTheme::YellowPulse => CursorThemeDesc {
+                base_color: Color::rgb(255, 210, 60),
+                shape: CursorShape::Ring,
+                default_glow: 0.2,
+                click_accent: Color::rgb(255, 240, 160),
+            },
+            CursorTheme::PurpleHaze => CursorThemeDesc {
+                base_color: Color::rgb(180, 100, 255),
+                shape: CursorShape::Ring,
+                default_glow: 0.5,
+                click_accent: Color::rgb(220, 180, 255),
+            },
+            CursorTheme::WhiteCircle => CursorThemeDesc {
+                base_color: Color::rgb(240, 240, 240),
+                shape: CursorShape::FilledDot,
+                default_glow: 0.0,
+                click_accent: Color::rgb(255, 255, 255),
+            },
         }
     }
 }
@@ -400,4 +453,118 @@ pub type SharedConfig = Arc<Mutex<AppConfig>>;
 
 pub fn shared_config() -> SharedConfig {
     Arc::new(Mutex::new(AppConfig::load()))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn config_serialize_deserialize_roundtrip() {
+        let mut config = AppConfig::default();
+        config.enable_green_cursor_ring = true;
+        config.cursor_theme = Some(CursorTheme::BlueGlow);
+        config.cursor_ring_size_px = 80.0;
+        config.cursor_ring_thickness_px = 6.0;
+        config.cursor_ring_opacity = 0.7;
+        config.cursor_glow = 0.5;
+        config.cursor_hide_after_ms = 1500;
+        config.enable_click_animation = true;
+        config.enable_keystroke_sounds = true;
+        config.sound_volume = 0.8;
+        config.sound_preset = "Mechanical".to_string();
+
+        let json = serde_json::to_string_pretty(&config).expect("serialize");
+        let restored: AppConfig = serde_json::from_str(&json).expect("deserialize");
+
+        assert_eq!(restored.enable_green_cursor_ring, true);
+        assert_eq!(restored.cursor_theme, Some(CursorTheme::BlueGlow));
+        assert!((restored.cursor_ring_size_px - 80.0).abs() < f32::EPSILON);
+        assert!((restored.cursor_ring_thickness_px - 6.0).abs() < f32::EPSILON);
+        assert!((restored.cursor_ring_opacity - 0.7).abs() < f32::EPSILON);
+        assert!((restored.cursor_glow - 0.5).abs() < f32::EPSILON);
+        assert_eq!(restored.cursor_hide_after_ms, 1500);
+        assert_eq!(restored.enable_click_animation, true);
+        assert_eq!(restored.enable_keystroke_sounds, true);
+        assert!((restored.sound_volume - 0.8).abs() < f32::EPSILON);
+        assert_eq!(restored.sound_preset, "Mechanical");
+    }
+
+    #[test]
+    fn config_default_values() {
+        let config = AppConfig::default();
+        assert!(!config.enable_green_cursor_ring);
+        assert!((config.cursor_ring_size_px - 56.0).abs() < f32::EPSILON);
+        assert!((config.cursor_ring_thickness_px - 4.0).abs() < f32::EPSILON);
+        assert!((config.cursor_ring_opacity - 0.9).abs() < f32::EPSILON);
+        assert!((config.cursor_glow).abs() < f32::EPSILON);
+        assert_eq!(config.cursor_hide_after_ms, 0);
+        assert!(!config.enable_click_animation);
+        assert!(!config.enable_keystroke_sounds);
+        assert!((config.sound_volume - 0.5).abs() < f32::EPSILON);
+        assert_eq!(config.sound_preset, "Typewriter");
+    }
+
+    #[test]
+    fn cursor_theme_all_have_labels_and_colors() {
+        for theme in CursorTheme::ALL {
+            let label = theme.label();
+            assert!(!label.is_empty(), "{:?} has empty label", theme);
+
+            let desc = theme.desc();
+            // Every theme must have a non-zero color
+            assert!(
+                desc.base_color.r > 0 || desc.base_color.g > 0 || desc.base_color.b > 0,
+                "{:?} has zero color",
+                theme
+            );
+            // Click accent must also be non-zero
+            assert!(
+                desc.click_accent.r > 0 || desc.click_accent.g > 0 || desc.click_accent.b > 0,
+                "{:?} has zero click accent",
+                theme
+            );
+        }
+    }
+
+    #[test]
+    fn cursor_theme_shapes() {
+        assert_eq!(CursorTheme::GreenRing.desc().shape, CursorShape::Ring);
+        assert_eq!(CursorTheme::BlueGlow.desc().shape, CursorShape::Ring);
+        assert_eq!(CursorTheme::RedDot.desc().shape, CursorShape::FilledDot);
+        assert_eq!(CursorTheme::YellowPulse.desc().shape, CursorShape::Ring);
+        assert_eq!(CursorTheme::PurpleHaze.desc().shape, CursorShape::Ring);
+        assert_eq!(CursorTheme::WhiteCircle.desc().shape, CursorShape::FilledDot);
+    }
+
+    #[test]
+    fn cursor_theme_glow_defaults() {
+        // GreenRing has no default glow
+        assert!((CursorTheme::GreenRing.desc().default_glow).abs() < f32::EPSILON);
+        // BlueGlow has glow
+        assert!(CursorTheme::BlueGlow.desc().default_glow > 0.0);
+        // PurpleHaze has the most glow
+        assert!(CursorTheme::PurpleHaze.desc().default_glow > CursorTheme::BlueGlow.desc().default_glow);
+    }
+
+    #[test]
+    fn cursor_ring_settings_from_config_themes() {
+        use super::*;
+        let mut cfg = AppConfig::default();
+        cfg.enable_green_cursor_ring = true;
+
+        // Default theme (None -> GreenRing)
+        cfg.cursor_theme = None;
+        let json = serde_json::to_string(&cfg).unwrap();
+        let restored: AppConfig = serde_json::from_str(&json).unwrap();
+        assert_eq!(restored.cursor_theme, None);
+
+        // Each theme variant survives roundtrip
+        for theme in CursorTheme::ALL {
+            cfg.cursor_theme = Some(theme);
+            let json = serde_json::to_string(&cfg).unwrap();
+            let restored: AppConfig = serde_json::from_str(&json).unwrap();
+            assert_eq!(restored.cursor_theme, Some(theme));
+        }
+    }
 }

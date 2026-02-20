@@ -2,6 +2,7 @@ mod cursor_ring;
 mod mouse_icon;
 mod overlay_startup_diagnostics;
 mod settings_window;
+mod sound_engine;
 mod theme;
 mod win_region;
 
@@ -12,11 +13,12 @@ use std::sync::{Mutex, OnceLock};
 use std::time::{Duration, Instant};
 
 use anyhow::Result;
-use cursor_ring::{CursorRingController, CursorRingSettings};
+use cursor_ring::{ClickEvent, CursorRingController, CursorRingSettings};
 use eframe::egui;
 use eframe::epaint::Rgba;
 use keyoverlay_core::{AppConfig, OverlayPosition, SharedConfig};
 use keyoverlay_input::{InputEvent, Key, MouseButton, ScrollDirection};
+use sound_engine::{SoundEngine, SoundSettings};
 use mouse_icon::{draw_mouse_icon, MouseHighlight, ScrollArrowDirection};
 
 use win_region::{
@@ -539,7 +541,8 @@ struct App {
     last_live_move_at: Option<Instant>,
     active_until: Instant,
     cursor_ring: CursorRingController,
-    /// Track whether the main UI window is minimized so the overlay can be hidden.
+    sound_engine: SoundEngine,
+    /// Track whether the main UI window is minimized (for logging only; overlay stays visible).
     ui_minimized: bool,
     /// Previous token count for detecting token changes (combo delay fix).
     prev_token_count: usize,
@@ -565,6 +568,7 @@ impl App {
         }
 
         let cursor_ring_settings = CursorRingSettings::from_config(&draft);
+        let sound_settings = SoundSettings::from_config(&draft);
 
         Self {
             config,
@@ -601,6 +605,7 @@ impl App {
             last_live_move_at: None,
             active_until: Instant::now(),
             cursor_ring: CursorRingController::new(cursor_ring_settings),
+            sound_engine: SoundEngine::new(sound_settings),
             ui_minimized: false,
             prev_token_count: 0,
         }
@@ -1196,6 +1201,22 @@ impl eframe::App for App {
                     }
                 }
             }
+            // Forward mouse clicks to cursor ring for click animation
+            if let InputEvent::MouseClick(ref click_ev) = event {
+                if click_ev.is_down {
+                    self.cursor_ring
+                        .notify_click(ClickEvent { is_down: true });
+                }
+            }
+            // Play keystroke sound on initial keydown (skip modifier-only presses)
+            if let InputEvent::Key(ref key_ev) = event {
+                if key_ev.is_down
+                    && !matches!(key_ev.key, Key::Shift | Key::Ctrl | Key::Alt | Key::Win)
+                    && !self.input_state.pressed_keys.contains(&key_ev.key)
+                {
+                    self.sound_engine.play_keystroke();
+                }
+            }
             self.tray_on_event(&event, now);
             self.input_state.apply_event(event);
             if repaint_debug_enabled() {
@@ -1251,6 +1272,8 @@ impl eframe::App for App {
         *self.config.lock().unwrap() = self.draft.clone();
         self.cursor_ring
             .sync(CursorRingSettings::from_config(&self.draft));
+        self.sound_engine
+            .update_settings(SoundSettings::from_config(&self.draft));
 
         let screen_rect = ctx.input(|i| i.screen_rect());
         overlay_startup_diagnostics::log_event(format!(
@@ -1276,43 +1299,20 @@ impl eframe::App for App {
             self.manual_slider_drag_ended = false;
         }
 
-        // ── Detect main UI minimize/restore ──
+        // ── Detect main UI minimize/restore (for logging only) ──
+        // The overlay must remain visible and functional even when the settings
+        // UI window is minimized — users expect the overlay to keep working.
         let was_minimized = self.ui_minimized;
         self.ui_minimized = ctx
             .input(|i| i.viewport().minimized)
             .unwrap_or(false);
 
-        if self.ui_minimized != was_minimized {
-            if minimize_debug_enabled() {
-                eprintln!(
-                    "[overlay-minimize] UI {} -> {}",
-                    if was_minimized { "minimized" } else { "visible" },
-                    if self.ui_minimized { "minimized" } else { "visible" },
-                );
-            }
-        }
-
-        // When UI is minimized, force-hide overlay and skip rendering it.
-        if self.ui_minimized {
-            let overlay_id = egui::ViewportId::from_hash_of("overlay");
-            ctx.send_viewport_cmd_to(overlay_id, egui::ViewportCommand::Visible(false));
-            if let Some(hwnd) = self.last_hwnd {
-                hide_window(hwnd);
-                if minimize_debug_enabled() && !was_minimized {
-                    eprintln!("[overlay-minimize] overlay hidden (SW_HIDE) hwnd={hwnd:?}");
-                }
-            }
-            self.first_show_done = false;
-            // Slow repaint while minimized — nothing to animate.
-            ctx.request_repaint_after(Duration::from_millis(500));
-            return;
-        }
-
-        // On restore from minimized, log and let normal flow re-show overlay.
-        if was_minimized && !self.ui_minimized {
-            if minimize_debug_enabled() {
-                eprintln!("[overlay-minimize] UI restored; overlay will resume if enabled");
-            }
+        if self.ui_minimized != was_minimized && minimize_debug_enabled() {
+            eprintln!(
+                "[overlay-minimize] UI {} -> {} (overlay stays active)",
+                if was_minimized { "minimized" } else { "visible" },
+                if self.ui_minimized { "minimized" } else { "visible" },
+            );
         }
 
         if self.draft.overlay_enabled {

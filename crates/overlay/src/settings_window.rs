@@ -800,7 +800,7 @@ fn tab_sounds(app: &mut App, ui: &mut egui::Ui) {
             });
             ui.add_space(4.0);
             ui.label(
-                egui::RichText::new("Sound playback is a placeholder — audio engine not yet integrated.")
+                egui::RichText::new("Sounds play on non-modifier keydown events.")
                     .color(MUTED_TEXT)
                     .size(11.0),
             );
