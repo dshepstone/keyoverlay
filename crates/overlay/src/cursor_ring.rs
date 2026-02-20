@@ -131,7 +131,7 @@ mod imp {
                 (255.0 * 0.9) as u8,
                 LWA_COLORKEY | LWA_ALPHA,
             );
-            ShowWindow(hwnd, SW_SHOWNOACTIVATE);
+            let _ = ShowWindow(hwnd, SW_SHOWNOACTIVATE);
         }
 
         Some(hwnd)
@@ -194,7 +194,9 @@ mod imp {
                 let gg = gg.max(1);
 
                 let glow_color = rgb_to_colorref(gr, gg, gb);
-                let pen_thick = ((settings.thickness_px as f32) * (1.0 - t * 0.5)).round().max(1.0) as i32;
+                let pen_thick = ((settings.thickness_px as f32) * (1.0 - t * 0.5))
+                    .round()
+                    .max(1.0) as i32;
                 let pen = unsafe { CreatePen(PS_SOLID, pen_thick, glow_color) };
                 let old_pen = unsafe { SelectObject(dc, HGDIOBJ(pen.0)) };
                 let hollow = unsafe { GetStockObject(HOLLOW_BRUSH) };
@@ -302,8 +304,7 @@ mod imp {
     fn set_window_alpha(hwnd: HWND, opacity: f32) {
         let alpha = (opacity.clamp(0.2, 1.0) * 255.0).round() as u8;
         unsafe {
-            let _ =
-                SetLayeredWindowAttributes(hwnd, COLORREF(0), alpha, LWA_COLORKEY | LWA_ALPHA);
+            let _ = SetLayeredWindowAttributes(hwnd, COLORREF(0), alpha, LWA_COLORKEY | LWA_ALPHA);
         }
     }
 
@@ -406,7 +407,7 @@ mod imp {
                     if !settings.enabled {
                         if let Some(window) = hwnd.take() {
                             unsafe {
-                                ShowWindow(window, SW_HIDE);
+                                let _ = ShowWindow(window, SW_HIDE);
                                 let _ = DestroyWindow(window);
                             }
                             if debug_enabled() {
@@ -435,8 +436,7 @@ mod imp {
                             };
                             let total_size_base =
                                 settings.diameter_px + glow_margin * 2 + expand_margin * 2;
-                            let scaled_total =
-                                (total_size_base as f32 * dpi_scale).round() as i32;
+                            let scaled_total = (total_size_base as f32 * dpi_scale).round() as i32;
                             unsafe {
                                 let _ = SetWindowPos(
                                     window,
@@ -447,7 +447,7 @@ mod imp {
                                     scaled_total,
                                     SWP_NOACTIVATE | SWP_NOOWNERZORDER | SWP_SHOWWINDOW,
                                 );
-                                ShowWindow(window, SW_SHOWNOACTIVATE);
+                                let _ = ShowWindow(window, SW_SHOWNOACTIVATE);
                             }
                             set_window_alpha(window, settings.opacity);
                             // Draw with scaled pixel dimensions
@@ -473,7 +473,7 @@ mod imp {
                                 if hidden_by_idle {
                                     hidden_by_idle = false;
                                     unsafe {
-                                        ShowWindow(window, SW_SHOWNOACTIVATE);
+                                        let _ = ShowWindow(window, SW_SHOWNOACTIVATE);
                                     }
                                     if debug_enabled() {
                                         eprintln!("[cursor-ring] shown (motion resumed)");
@@ -486,7 +486,7 @@ mod imp {
                                 hidden_by_idle = false;
                                 last_motion_at = Instant::now();
                                 unsafe {
-                                    ShowWindow(window, SW_SHOWNOACTIVATE);
+                                    let _ = ShowWindow(window, SW_SHOWNOACTIVATE);
                                 }
                                 if debug_enabled() {
                                     eprintln!("[cursor-ring] shown (click while idle)");
@@ -501,7 +501,7 @@ mod imp {
                             {
                                 hidden_by_idle = true;
                                 unsafe {
-                                    ShowWindow(window, SW_HIDE);
+                                    let _ = ShowWindow(window, SW_HIDE);
                                 }
                                 if debug_enabled() {
                                     eprintln!(
@@ -567,7 +567,7 @@ mod imp {
 
                 if let Some(window) = hwnd {
                     unsafe {
-                        ShowWindow(window, SW_HIDE);
+                        let _ = ShowWindow(window, SW_HIDE);
                         let _ = DestroyWindow(window);
                     }
                 }

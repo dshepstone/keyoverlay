@@ -25,10 +25,11 @@ use sound_engine::{SoundEngine, SoundSettings};
 
 use win_region::{
     apply_no_activate_styles, apply_tray_region_hwnd_with_redraw, disable_dwm_transitions,
-    find_hwnd_by_title, force_redraw, hide_window, hwnd_is_valid, is_foreground_window,
-    is_window_minimized, restore_window, show_window_no_activate, snapshot_hwnd_state, OverlayHwnd,
-    PillRect,
+    find_hwnd_by_title, force_redraw, hwnd_is_valid, is_foreground_window, show_window_no_activate,
+    snapshot_hwnd_state, OverlayHwnd, PillRect,
 };
+#[cfg(target_os = "windows")]
+use win_region::{hide_window, is_window_minimized, restore_window};
 
 const OVERLAY_VIEWPORT_TITLE: &str = "KeyOverlayOverlay";
 const LARGE_KEY_FONT_BOOST: f32 = 14.0;
@@ -557,8 +558,6 @@ struct App {
     #[cfg(target_os = "windows")]
     last_viewport_focused: Option<bool>,
     #[cfg(target_os = "windows")]
-    last_viewport_occluded: Option<bool>,
-    #[cfg(target_os = "windows")]
     last_viewport_size: Option<egui::Vec2>,
     #[cfg(target_os = "windows")]
     overlay_frame_counter: u64,
@@ -632,8 +631,6 @@ impl App {
             #[cfg(target_os = "windows")]
             last_viewport_focused: None,
             #[cfg(target_os = "windows")]
-            last_viewport_occluded: None,
-            #[cfg(target_os = "windows")]
             last_viewport_size: None,
             #[cfg(target_os = "windows")]
             overlay_frame_counter: 0,
@@ -644,14 +641,9 @@ impl App {
 
     #[cfg(target_os = "windows")]
     fn log_windows_viewport_state(&mut self, ctx: &egui::Context) {
-        let (focused, minimized, occluded, inner_size) = ctx.input(|i| {
+        let (focused, minimized, inner_size) = ctx.input(|i| {
             let vp = i.viewport();
-            (
-                vp.focused,
-                vp.minimized,
-                vp.occluded,
-                vp.inner_rect.map(|r| r.size()),
-            )
+            (vp.focused, vp.minimized, vp.inner_rect.map(|r| r.size()))
         });
 
         if focused != self.last_viewport_focused {
@@ -668,13 +660,6 @@ impl App {
                     "[overlay-minimize] WindowEvent::Minimized -> {:?}",
                     minimized
                 );
-            }
-        }
-
-        if occluded != self.last_viewport_occluded {
-            self.last_viewport_occluded = occluded;
-            if minimize_debug_enabled() {
-                eprintln!("[overlay-minimize] WindowEvent::Occluded -> {:?}", occluded);
             }
         }
 
