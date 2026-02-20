@@ -147,8 +147,16 @@ mod imp {
         COLORREF((r as u32) | ((g as u32) << 8) | ((b as u32) << 16))
     }
 
-    /// Draw the cursor highlight on the window DC.
-    fn draw_highlight(hwnd: HWND, settings: &CursorRingSettings, click_expand: f32) {
+    /// Draw the cursor highlight into the window.
+    ///
+    /// `window_size` must match the current window dimensions (in pixels) so
+    /// the ring is always centred regardless of current click-animation state.
+    fn draw_highlight(
+        hwnd: HWND,
+        settings: &CursorRingSettings,
+        click_expand: f32,
+        window_size: i32,
+    ) {
         if !unsafe { IsWindow(hwnd).as_bool() } {
             return;
         }
@@ -158,30 +166,39 @@ mod imp {
             return;
         }
 
-        // Total window size includes glow margin + click expand
+        // Centre the ring in the *actual* window (whose size already accounts
+        // for glow + max click-expand margins).  This avoids the old bug where
+        // draw_highlight computed its own total_size from click_expand, giving
+        // a smaller value when not animating and shifting the ring up-left.
+        let center = window_size / 2;
+        let base_radius = settings.diameter_px / 2;
+
+        // Glow margin — only used for glow-ring radii, not for centering.
         let glow_margin = if settings.glow > 0.0 {
             (settings.diameter_px as f32 * settings.glow * 0.5).round() as i32
         } else {
             0
         };
-        let expand_margin = (click_expand * settings.diameter_px as f32 * 0.3).round() as i32;
-        let total_size = settings.diameter_px + glow_margin * 2 + expand_margin * 2;
 
-        // Clear with transparent (black = color key)
+        // Max expand margin for click animation radius.
+        let max_expand_margin = if settings.click_animation {
+            (settings.diameter_px as f32 * 0.3).round() as i32
+        } else {
+            0
+        };
+
+        // Clear the full window with transparent (black = color key).
         let rect = RECT {
             left: 0,
             top: 0,
-            right: total_size,
-            bottom: total_size,
+            right: window_size,
+            bottom: window_size,
         };
         let background = unsafe { CreateSolidBrush(COLORREF(0)) };
         unsafe {
             FillRect(dc, &rect, background);
         }
         let _ = unsafe { DeleteObject(background) };
-
-        let center = total_size / 2;
-        let base_radius = settings.diameter_px / 2;
 
         // Draw glow layers (concentric rings with decreasing alpha effect via thinner pens)
         if settings.glow > 0.0 {
@@ -221,7 +238,8 @@ mod imp {
 
         // Draw click animation expanding ring
         if click_expand > 0.01 {
-            let expand_radius = base_radius + (expand_margin as f32 * click_expand).round() as i32;
+            let expand_radius =
+                base_radius + (max_expand_margin as f32 * click_expand).round() as i32;
             let cr = settings.click_accent_r.max(1);
             let cg = settings.click_accent_g.max(1);
             let cb = settings.click_accent_b;
@@ -292,7 +310,50 @@ mod imp {
             let _ = unsafe { DeleteObject(pen) };
         }
 
+        // Debug: draw a small red crosshair at ring center to verify alignment.
+        if debug_enabled() {
+            let dbg_brush = unsafe { CreateSolidBrush(rgb_to_colorref(255, 50, 50)) };
+            // Horizontal arm
+            let h = RECT {
+                left: center - 5,
+                top: center,
+                right: center + 6,
+                bottom: center + 1,
+            };
+            unsafe {
+                FillRect(dc, &h, dbg_brush);
+            }
+            // Vertical arm
+            let v = RECT {
+                left: center,
+                top: center - 5,
+                right: center + 1,
+                bottom: center + 6,
+            };
+            unsafe {
+                FillRect(dc, &v, dbg_brush);
+            }
+            let _ = unsafe { DeleteObject(dbg_brush) };
+        }
+
         let _ = unsafe { ReleaseDC(hwnd, dc) };
+    }
+
+    /// Compute the total window size (in pixels) from already-DPI-scaled
+    /// settings.  This is the single source of truth used by both
+    /// `SetWindowPos` and `draw_highlight` so they always agree.
+    fn scaled_window_size(settings: &CursorRingSettings) -> i32 {
+        let glow_margin = if settings.glow > 0.0 {
+            (settings.diameter_px as f32 * settings.glow * 0.5).round() as i32
+        } else {
+            0
+        };
+        let expand_margin = if settings.click_animation {
+            (settings.diameter_px as f32 * 0.3).round() as i32
+        } else {
+            0
+        };
+        settings.diameter_px + glow_margin * 2 + expand_margin * 2
     }
 
     fn scale_for_dpi(hwnd: HWND) -> f32 {
@@ -429,20 +490,17 @@ mod imp {
 
                         if needs_redraw {
                             let dpi_scale = scale_for_dpi(window);
-                            let glow_margin = if settings.glow > 0.0 {
-                                (settings.diameter_px as f32 * settings.glow * 0.5).round() as i32
-                            } else {
-                                0
+                            // Scale diameter/thickness first, then derive
+                            // margins from the scaled values so that
+                            // draw_highlight's centering matches exactly.
+                            let scaled_settings = CursorRingSettings {
+                                diameter_px: (settings.diameter_px as f32 * dpi_scale).round()
+                                    as i32,
+                                thickness_px: (settings.thickness_px as f32 * dpi_scale).round()
+                                    as i32,
+                                ..settings
                             };
-                            let expand_margin = if settings.click_animation {
-                                (settings.diameter_px as f32 * 0.3).round() as i32
-                            } else {
-                                0
-                            };
-                            let total_size_base =
-                                settings.diameter_px + glow_margin * 2 + expand_margin * 2;
-                            let scaled_total =
-                                (total_size_base as f32 * dpi_scale).round() as i32;
+                            let scaled_total = scaled_window_size(&scaled_settings);
                             unsafe {
                                 let _ = SetWindowPos(
                                     window,
@@ -456,15 +514,7 @@ mod imp {
                                 ShowWindow(window, SW_SHOWNOACTIVATE);
                             }
                             set_window_alpha(window, settings.opacity);
-                            // Draw with scaled pixel dimensions
-                            let scaled_settings = CursorRingSettings {
-                                diameter_px: (settings.diameter_px as f32 * dpi_scale).round()
-                                    as i32,
-                                thickness_px: (settings.thickness_px as f32 * dpi_scale).round()
-                                    as i32,
-                                ..settings
-                            };
-                            draw_highlight(window, &scaled_settings, click_expand);
+                            draw_highlight(window, &scaled_settings, click_expand, scaled_total);
                             last_settings = settings;
                         }
 
@@ -519,21 +569,24 @@ mod imp {
 
                             if (moved || due) && !hidden_by_idle {
                                 let dpi_scale = scale_for_dpi(window);
-                                let glow_margin = if settings.glow > 0.0 {
-                                    (settings.diameter_px as f32 * settings.glow * 0.5).round()
-                                        as i32
-                                } else {
-                                    0
+                                // Compute scaled_total from scaled components
+                                // (identical to the needs_redraw path and to
+                                // what draw_highlight uses for centering).
+                                let scaled_diam =
+                                    (settings.diameter_px as f32 * dpi_scale).round() as i32;
+                                let scaled_total = {
+                                    let gm = if settings.glow > 0.0 {
+                                        (scaled_diam as f32 * settings.glow * 0.5).round() as i32
+                                    } else {
+                                        0
+                                    };
+                                    let em = if settings.click_animation {
+                                        (scaled_diam as f32 * 0.3).round() as i32
+                                    } else {
+                                        0
+                                    };
+                                    scaled_diam + gm * 2 + em * 2
                                 };
-                                let expand_margin = if settings.click_animation {
-                                    (settings.diameter_px as f32 * 0.3).round() as i32
-                                } else {
-                                    0
-                                };
-                                let total_size_base =
-                                    settings.diameter_px + glow_margin * 2 + expand_margin * 2;
-                                let scaled_total =
-                                    (total_size_base as f32 * dpi_scale).round() as i32;
                                 let (x, y) = if settings.hotspot_center {
                                     // Centered: circle center = cursor hotspot.
                                     (
@@ -546,8 +599,9 @@ mod imp {
                                     // d = normalize(1,1) = (1/√2, 1/√2).
                                     // circle_center = hotspot - d * r
                                     // window_pos = circle_center - scaled_total/2
-                                    let r = settings.diameter_px as f32 * dpi_scale * 0.5;
-                                    let offset = (r * std::f32::consts::FRAC_1_SQRT_2).round() as i32;
+                                    let r = scaled_diam as f32 * 0.5;
+                                    let offset =
+                                        (r * std::f32::consts::FRAC_1_SQRT_2).round() as i32;
                                     (
                                         point.x - offset - (scaled_total / 2),
                                         point.y - offset - (scaled_total / 2),
@@ -568,8 +622,12 @@ mod imp {
                                     && moved
                                     && last_debug_log.elapsed() >= Duration::from_millis(500)
                                 {
-                                    let mode = if settings.hotspot_center { "centered" } else { "lower-right-edge" };
-                                    let r = settings.diameter_px as f32 * dpi_scale * 0.5;
+                                    let mode = if settings.hotspot_center {
+                                        "centered"
+                                    } else {
+                                        "lower-right-edge"
+                                    };
+                                    let r = scaled_diam as f32 * 0.5;
                                     eprintln!(
                                         "[cursor-ring] mode={} hotspot=({},{}) r={:.1} window=({},{}) total_size={}",
                                         mode, point.x, point.y, r, x, y, scaled_total
