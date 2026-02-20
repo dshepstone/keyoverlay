@@ -387,9 +387,8 @@ fn draw_main_panel(_ctx: &egui::Context, ui: &mut egui::Ui, app: &mut App) {
             .rounding(egui::Rounding::same(12.0))
             .min_size(egui::vec2(52.0, 26.0));
 
-            let toggle_id = egui::Id::new("cmd::overlay_toggle");
-            let toggle_resp = ui.push_id(toggle_id, |ui| ui.add(btn)).inner;
-            if command_activated_on_press(ui, toggle_id, &toggle_resp) {
+            let toggle_resp = ui.add(btn);
+            if toggle_resp.clicked() {
                 app.draft.overlay_enabled = !app.draft.overlay_enabled;
                 app.apply();
             }
