@@ -23,8 +23,9 @@ use mouse_icon::{draw_mouse_icon, MouseHighlight, ScrollArrowDirection};
 
 use win_region::{
     apply_no_activate_styles, apply_tray_region_hwnd_with_redraw, disable_dwm_transitions,
-    find_hwnd_by_title, force_redraw, hide_window, hwnd_is_valid, is_foreground_window,
-    show_window_no_activate, snapshot_hwnd_state, OverlayHwnd, PillRect,
+    find_hwnd_by_title, force_redraw, hwnd_is_valid, is_foreground_window,
+    restore_and_move_offscreen, show_window_no_activate, snapshot_hwnd_state, OverlayHwnd,
+    PillRect,
 };
 
 const OVERLAY_VIEWPORT_TITLE: &str = "KeyOverlayOverlay";
@@ -544,9 +545,14 @@ struct App {
     sound_engine: SoundEngine,
     /// Track whether the main UI window is minimized.
     ui_minimized: bool,
-    /// True when the window is hidden (un-minimized + invisible) to keep the
-    /// rendering pipeline alive while the user thinks it is minimized.
+    /// True when the window has been moved off-screen (pseudo-minimized) to
+    /// keep the rendering pipeline alive while the user thinks it is minimized.
     ui_hidden: bool,
+    /// Cached HWND for the main settings window (used for the off-screen trick).
+    main_window_hwnd: Option<OverlayHwnd>,
+    /// Window outer-rect position saved just before we move the window
+    /// off-screen, so we can restore to the same spot later.
+    main_window_saved_pos: Option<egui::Pos2>,
     /// Previous token count for detecting token changes (combo delay fix).
     prev_token_count: usize,
 }
@@ -611,6 +617,8 @@ impl App {
             sound_engine: SoundEngine::new(sound_settings),
             ui_minimized: false,
             ui_hidden: false,
+            main_window_hwnd: None,
+            main_window_saved_pos: None,
             prev_token_count: 0,
         }
     }
@@ -1304,44 +1312,65 @@ impl eframe::App for App {
         }
 
         // ── Detect main UI minimize/restore ──
-        // When the settings window is minimized on Windows, the wgpu surface
-        // becomes outdated (zero-size) and the rendering pipeline stops calling
-        // show_viewport_immediate for the overlay.  To keep the overlay alive we
-        // intercept the minimize: immediately un-minimize the window and hide it
-        // instead (Visible(false)).  A hidden-but-restored window keeps the
-        // event loop and rendering pipeline running so the overlay viewport
-        // continues to receive frames.
+        // When the settings window is minimized on Windows the wgpu surface
+        // becomes zero-sized (Outdated), which stops eframe from calling
+        // show_viewport_immediate for the overlay — freezing it.
+        //
+        // Fix: when a minimize is detected we synchronously call
+        // ShowWindow(SW_RESTORE) + SetWindowPos(-32000,-32000) via Win32.
+        // SW_RESTORE sends WM_SIZE(SIZE_RESTORED) which keeps the surface at a
+        // valid (non-zero) size.  Moving to (-32000,-32000) makes the window
+        // invisible to the user while it remains "visible" to Windows so it
+        // stays in the taskbar and can be clicked to restore.
+
+        // Save the outer-rect position every frame while the window is visible
+        // so we know where to put it back after un-hiding.
+        if !self.ui_hidden {
+            if let Some(outer) = ctx.input(|i| i.viewport().outer_rect) {
+                self.main_window_saved_pos = Some(outer.min);
+            }
+        }
+
         let was_minimized = self.ui_minimized;
         self.ui_minimized = ctx
             .input(|i| i.viewport().minimized)
             .unwrap_or(false);
 
         if self.ui_minimized && !was_minimized {
-            // Just became minimized — restore and hide instead so the overlay
-            // rendering pipeline stays alive.
+            // Lazily find and cache the main window HWND.
+            if self.main_window_hwnd.is_none() {
+                self.main_window_hwnd = find_hwnd_by_title("KeyOverlay");
+            }
+            if let Some(hwnd) = self.main_window_hwnd {
+                // Synchronous Win32 call: restore from minimize and move
+                // off-screen.  This happens in the same OS message-pump turn
+                // as the minimize, so the surface stays alive.
+                restore_and_move_offscreen(hwnd);
+            }
+            // Keep egui's internal minimized flag consistent.
             ctx.send_viewport_cmd(egui::ViewportCommand::Minimized(false));
-            ctx.send_viewport_cmd(egui::ViewportCommand::Visible(false));
             self.ui_hidden = true;
             if minimize_debug_enabled() {
                 eprintln!(
-                    "[overlay-minimize] UI minimized -> hidden (overlay stays active)",
+                    "[overlay-minimize] UI minimized -> moved off-screen (overlay stays active)",
                 );
             }
         } else if !self.ui_minimized && was_minimized {
             if minimize_debug_enabled() {
-                eprintln!(
-                    "[overlay-minimize] UI restored",
-                );
+                eprintln!("[overlay-minimize] UI restored");
             }
         }
 
-        // When the user clicks the taskbar icon of a hidden window, the OS
-        // delivers a restore/focus event.  Detect this and make the window
-        // visible again.
+        // When the user clicks the taskbar icon of the off-screen window the
+        // OS activates it (gives it focus) because the window is visible and
+        // non-minimized — just off-screen.  Detect that focus event and snap
+        // the window back to its pre-hide position.
         if self.ui_hidden && !self.ui_minimized {
             let has_focus = ctx.input(|i| i.viewport().focused).unwrap_or(false);
             if has_focus {
-                ctx.send_viewport_cmd(egui::ViewportCommand::Visible(true));
+                if let Some(saved) = self.main_window_saved_pos {
+                    ctx.send_viewport_cmd(egui::ViewportCommand::OuterPosition(saved));
+                }
                 self.ui_hidden = false;
                 if minimize_debug_enabled() {
                     eprintln!("[overlay-minimize] UI un-hidden (focus restored)");

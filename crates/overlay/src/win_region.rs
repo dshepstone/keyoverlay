@@ -35,7 +35,7 @@ mod imp {
         GetWindowRect, GetWindowTextW, GetWindowThreadProcessId, IsWindow, IsWindowVisible,
         SetWindowLongPtrW, SetWindowPos, ShowWindow, GWL_EXSTYLE, GWL_STYLE, SWP_NOACTIVATE,
         SWP_NOMOVE, SWP_NOSENDCHANGING, SWP_NOSIZE, SWP_NOZORDER, SWP_SHOWWINDOW,
-        SW_HIDE, SW_SHOWNOACTIVATE,
+        SW_HIDE, SW_RESTORE, SW_SHOWNOACTIVATE,
     };
 
     use crate::overlay_startup_diagnostics;
@@ -293,6 +293,61 @@ mod imp {
         let _ = unsafe { ShowWindow(hwnd, SW_HIDE) };
     }
 
+    /// Restore a minimized window (to keep the wgpu surface alive) and
+    /// immediately move it to (-32000, -32000) so it is invisible to the user
+    /// but still present in the taskbar.  Returns the window's position
+    /// *before* the move (so the caller can restore it later).
+    pub fn restore_and_move_offscreen(hwnd: HWND) -> (i32, i32) {
+        // Read the window rect before we do anything.  While the window is
+        // minimized Windows reports the pre-minimize position here.
+        let mut rect = windows::Win32::Foundation::RECT::default();
+        let _ = unsafe { GetWindowRect(hwnd, &mut rect) };
+        let saved_x = rect.left;
+        let saved_y = rect.top;
+
+        // Restore from minimized state — this sends WM_SIZE(SIZE_RESTORED)
+        // which makes winit recreate the wgpu surface at a valid size.
+        let _ = unsafe { ShowWindow(hwnd, SW_RESTORE) };
+
+        // Move off-screen. (-32000, -32000) is the same position Windows uses
+        // internally for minimized windows, so it is guaranteed to be off every
+        // monitor.  SWP_NOSIZE keeps the client area intact so the surface
+        // stays valid.
+        let _ = unsafe {
+            SetWindowPos(
+                hwnd,
+                None,
+                -32000,
+                -32000,
+                0,
+                0,
+                SWP_NOSIZE | SWP_NOZORDER | SWP_NOACTIVATE | SWP_NOSENDCHANGING,
+            )
+        };
+
+        (saved_x, saved_y)
+    }
+
+    /// Move a window back to a specific screen position and make it visible.
+    pub fn restore_to_position(hwnd: HWND, x: i32, y: i32) {
+        if !unsafe { IsWindow(hwnd).as_bool() } {
+            return;
+        }
+        let _ = unsafe {
+            SetWindowPos(
+                hwnd,
+                None,
+                x,
+                y,
+                0,
+                0,
+                SWP_NOSIZE | SWP_NOZORDER | SWP_NOACTIVATE | SWP_NOSENDCHANGING
+                    | SWP_SHOWWINDOW,
+            )
+        };
+        let _ = unsafe { ShowWindow(hwnd, SW_SHOWNOACTIVATE) };
+    }
+
     pub fn is_foreground_window(hwnd: HWND) -> bool {
         if !unsafe { IsWindow(hwnd).as_bool() } {
             return false;
@@ -320,7 +375,7 @@ pub use imp::{
     apply_no_activate_styles, apply_test_region, apply_tray_region,
     apply_tray_region_hwnd_with_redraw, apply_tray_region_with_redraw, disable_dwm_transitions,
     find_hwnd_by_title, force_redraw, hide_window, hwnd_is_valid, is_foreground_window,
-    show_window_no_activate, snapshot_hwnd_state,
+    restore_and_move_offscreen, restore_to_position, show_window_no_activate, snapshot_hwnd_state,
 };
 
 #[cfg(not(target_os = "windows"))]
@@ -331,6 +386,14 @@ pub fn show_window_no_activate(_hwnd: OverlayHwnd) {}
 
 #[cfg(not(target_os = "windows"))]
 pub fn hide_window(_hwnd: OverlayHwnd) {}
+
+#[cfg(not(target_os = "windows"))]
+pub fn restore_and_move_offscreen(_hwnd: OverlayHwnd) -> (i32, i32) {
+    (0, 0)
+}
+
+#[cfg(not(target_os = "windows"))]
+pub fn restore_to_position(_hwnd: OverlayHwnd, _x: i32, _y: i32) {}
 
 #[cfg(not(target_os = "windows"))]
 pub fn is_foreground_window(_hwnd: OverlayHwnd) -> bool {
