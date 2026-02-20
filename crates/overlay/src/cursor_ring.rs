@@ -312,27 +312,14 @@ mod imp {
             let _ = SetLayeredWindowAttributes(hwnd, COLORREF(0), alpha, LWA_COLORKEY | LWA_ALPHA);
         }
     }
-
-    fn calculate_overlay_pos(
-        mouse_pos: (i32, i32),
-        diameter_px: i32,
-        center_cursor: bool,
-    ) -> (i32, i32) {
-        let (mx, my) = mouse_pos;
-        let diameter = diameter_px.max(1) as f32;
-        if center_cursor {
-            // Tip at center: top-left = mouse - radius.
-            let radius = diameter * 0.5;
-            (
-                (mx as f32 - radius).round() as i32,
-                (my as f32 - radius).round() as i32,
-            )
+    fn get_draw_origin(mx: f32, my: f32, size: f32, is_centered: bool) -> (f32, f32) {
+        if is_centered {
+            // State A: cursor tip at circle center.
+            let half = size * 0.5;
+            (mx - half, my - half)
         } else {
-            // Tip at bottom-right edge: top-left = mouse - diameter.
-            (
-                (mx as f32 - diameter).round() as i32,
-                (my as f32 - diameter).round() as i32,
-            )
+            // State B: cursor tip at bottom-right edge/corner anchor.
+            (mx - size, my - size)
         }
     }
 
@@ -562,13 +549,14 @@ mod imp {
 
                                 // Extra window margins (glow/click-expand) around the circle.
                                 let margin = (scaled_total - scaled_diameter).max(0) / 2;
-                                let (circle_x, circle_y) = calculate_overlay_pos(
-                                    (point.x, point.y),
-                                    scaled_diameter,
+                                let (draw_x, draw_y) = get_draw_origin(
+                                    point.x as f32,
+                                    point.y as f32,
+                                    scaled_diameter.max(1) as f32,
                                     settings.hotspot_center,
                                 );
-                                let x = circle_x - margin;
-                                let y = circle_y - margin;
+                                let x = draw_x.round() as i32 - margin;
+                                let y = draw_y.round() as i32 - margin;
                                 unsafe {
                                     let _ = SetWindowPos(
                                         window,
