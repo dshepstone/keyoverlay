@@ -1,4 +1,4 @@
-use keyoverlay_core::{AppConfig, CursorShape, CursorTheme};
+use keyoverlay_core::{AppConfig, CursorAnchorMode, CursorShape, CursorTheme};
 
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub struct CursorRingSettings {
@@ -22,9 +22,8 @@ pub struct CursorRingSettings {
     pub click_accent_r: u8,
     pub click_accent_g: u8,
     pub click_accent_b: u8,
-    /// When true, the cursor hotspot is at the center of the circle.
-    /// When false, the cursor hotspot sits on the top edge of the circle.
-    pub hotspot_center: bool,
+    /// How the cursor highlight is anchored to the cursor hotspot.
+    pub anchor_mode: CursorAnchorMode,
 }
 
 impl CursorRingSettings {
@@ -52,7 +51,28 @@ impl CursorRingSettings {
             click_accent_r: desc.click_accent.r,
             click_accent_g: desc.click_accent.g,
             click_accent_b: desc.click_accent.b,
-            hotspot_center: cfg.cursor_hotspot_center,
+            anchor_mode: cfg.cursor_anchor_mode,
+        }
+    }
+}
+
+#[derive(Clone, Copy, Debug)]
+struct Vec2 {
+    x: f32,
+    y: f32,
+}
+
+fn cursor_highlight_center(p: Vec2, r: f32, stroke: f32, mode: CursorAnchorMode) -> Vec2 {
+    match mode {
+        CursorAnchorMode::Centered => p,
+        CursorAnchorMode::HotspotAtLowerRightEdge => {
+            let pad = (stroke * 0.5).max(0.0);
+            let offset = r + pad;
+            let d = std::f32::consts::FRAC_1_SQRT_2;
+            Vec2 {
+                x: p.x - d * offset,
+                y: p.y - d * offset,
+            }
         }
     }
 }
@@ -86,7 +106,7 @@ mod imp {
         WS_POPUP,
     };
 
-    use super::{ClickEvent, CursorRingSettings};
+    use super::{cursor_highlight_center, ClickEvent, CursorAnchorMode, CursorRingSettings, Vec2};
 
     fn debug_enabled() -> bool {
         static ENABLED: OnceLock<bool> = OnceLock::new();
@@ -135,7 +155,7 @@ mod imp {
                 (255.0 * 0.9) as u8,
                 LWA_COLORKEY | LWA_ALPHA,
             );
-            ShowWindow(hwnd, SW_SHOWNOACTIVATE);
+            let _ = ShowWindow(hwnd, SW_SHOWNOACTIVATE);
         }
 
         Some(hwnd)
@@ -198,7 +218,9 @@ mod imp {
                 let gg = gg.max(1);
 
                 let glow_color = rgb_to_colorref(gr, gg, gb);
-                let pen_thick = ((settings.thickness_px as f32) * (1.0 - t * 0.5)).round().max(1.0) as i32;
+                let pen_thick = ((settings.thickness_px as f32) * (1.0 - t * 0.5))
+                    .round()
+                    .max(1.0) as i32;
                 let pen = unsafe { CreatePen(PS_SOLID, pen_thick, glow_color) };
                 let old_pen = unsafe { SelectObject(dc, HGDIOBJ(pen.0)) };
                 let hollow = unsafe { GetStockObject(HOLLOW_BRUSH) };
@@ -306,8 +328,52 @@ mod imp {
     fn set_window_alpha(hwnd: HWND, opacity: f32) {
         let alpha = (opacity.clamp(0.2, 1.0) * 255.0).round() as u8;
         unsafe {
-            let _ =
-                SetLayeredWindowAttributes(hwnd, COLORREF(0), alpha, LWA_COLORKEY | LWA_ALPHA);
+            let _ = SetLayeredWindowAttributes(hwnd, COLORREF(0), alpha, LWA_COLORKEY | LWA_ALPHA);
+        }
+    }
+
+    #[derive(Clone, Copy, Debug)]
+    struct RingWindowPlacement {
+        x: i32,
+        y: i32,
+        size: i32,
+        center: Vec2,
+        radius: f32,
+    }
+
+    fn ring_window_placement(
+        hotspot: Vec2,
+        settings: &CursorRingSettings,
+        dpi_scale: f32,
+    ) -> RingWindowPlacement {
+        let diameter = settings.diameter_px as f32 * dpi_scale;
+        let radius = diameter * 0.5;
+        let stroke = settings.thickness_px as f32 * dpi_scale;
+
+        let glow_margin = if settings.glow > 0.0 {
+            settings.diameter_px as f32 * settings.glow * 0.5 * dpi_scale
+        } else {
+            0.0
+        };
+        let click_margin = if settings.click_animation {
+            settings.diameter_px as f32 * 0.3 * dpi_scale
+        } else {
+            0.0
+        };
+        let margin = glow_margin + click_margin;
+
+        let center = cursor_highlight_center(hotspot, radius, stroke, settings.anchor_mode);
+        let center_in_window = margin + radius;
+        let size = (diameter + margin * 2.0).round() as i32;
+        let x = (center.x - center_in_window).round() as i32;
+        let y = (center.y - center_in_window).round() as i32;
+
+        RingWindowPlacement {
+            x,
+            y,
+            size,
+            center,
+            radius,
         }
     }
 
@@ -354,7 +420,7 @@ mod imp {
                     click_accent_r: 180,
                     click_accent_g: 255,
                     click_accent_b: 180,
-                    hotspot_center: true,
+                    anchor_mode: CursorAnchorMode::Centered,
                 };
 
                 // Click animation state
@@ -411,7 +477,7 @@ mod imp {
                     if !settings.enabled {
                         if let Some(window) = hwnd.take() {
                             unsafe {
-                                ShowWindow(window, SW_HIDE);
+                                let _ = ShowWindow(window, SW_HIDE);
                                 let _ = DestroyWindow(window);
                             }
                             if debug_enabled() {
@@ -428,31 +494,22 @@ mod imp {
 
                         if needs_redraw {
                             let dpi_scale = scale_for_dpi(window);
-                            let glow_margin = if settings.glow > 0.0 {
-                                (settings.diameter_px as f32 * settings.glow * 0.5).round() as i32
-                            } else {
-                                0
-                            };
-                            let expand_margin = if settings.click_animation {
-                                (settings.diameter_px as f32 * 0.3).round() as i32
-                            } else {
-                                0
-                            };
-                            let total_size_base =
-                                settings.diameter_px + glow_margin * 2 + expand_margin * 2;
-                            let scaled_total =
-                                (total_size_base as f32 * dpi_scale).round() as i32;
+                            let placement = ring_window_placement(
+                                Vec2 { x: 0.0, y: 0.0 },
+                                &settings,
+                                dpi_scale,
+                            );
                             unsafe {
                                 let _ = SetWindowPos(
                                     window,
                                     HWND_TOPMOST,
                                     0,
                                     0,
-                                    scaled_total,
-                                    scaled_total,
+                                    placement.size,
+                                    placement.size,
                                     SWP_NOACTIVATE | SWP_NOOWNERZORDER | SWP_SHOWWINDOW,
                                 );
-                                ShowWindow(window, SW_SHOWNOACTIVATE);
+                                let _ = ShowWindow(window, SW_SHOWNOACTIVATE);
                             }
                             set_window_alpha(window, settings.opacity);
                             // Draw with scaled pixel dimensions
@@ -478,7 +535,7 @@ mod imp {
                                 if hidden_by_idle {
                                     hidden_by_idle = false;
                                     unsafe {
-                                        ShowWindow(window, SW_SHOWNOACTIVATE);
+                                        let _ = ShowWindow(window, SW_SHOWNOACTIVATE);
                                     }
                                     if debug_enabled() {
                                         eprintln!("[cursor-ring] shown (motion resumed)");
@@ -491,7 +548,7 @@ mod imp {
                                 hidden_by_idle = false;
                                 last_motion_at = Instant::now();
                                 unsafe {
-                                    ShowWindow(window, SW_SHOWNOACTIVATE);
+                                    let _ = ShowWindow(window, SW_SHOWNOACTIVATE);
                                 }
                                 if debug_enabled() {
                                     eprintln!("[cursor-ring] shown (click while idle)");
@@ -506,7 +563,7 @@ mod imp {
                             {
                                 hidden_by_idle = true;
                                 unsafe {
-                                    ShowWindow(window, SW_HIDE);
+                                    let _ = ShowWindow(window, SW_HIDE);
                                 }
                                 if debug_enabled() {
                                     eprintln!(
@@ -518,38 +575,20 @@ mod imp {
 
                             if (moved || due) && !hidden_by_idle {
                                 let dpi_scale = scale_for_dpi(window);
-                                let glow_margin = if settings.glow > 0.0 {
-                                    (settings.diameter_px as f32 * settings.glow * 0.5).round()
-                                        as i32
-                                } else {
-                                    0
+                                let hotspot = Vec2 {
+                                    x: point.x as f32,
+                                    y: point.y as f32,
                                 };
-                                let expand_margin = if settings.click_animation {
-                                    (settings.diameter_px as f32 * 0.3).round() as i32
-                                } else {
-                                    0
-                                };
-                                let total_size_base =
-                                    settings.diameter_px + glow_margin * 2 + expand_margin * 2;
-                                let scaled_total =
-                                    (total_size_base as f32 * dpi_scale).round() as i32;
-                                let x = point.x - (scaled_total / 2);
-                                let y = if settings.hotspot_center {
-                                    point.y - (scaled_total / 2)
-                                } else {
-                                    // Edge mode: cursor tip sits on the top edge of the circle.
-                                    // The circle starts at (glow_margin + expand_margin) inside the window.
-                                    let top_margin = ((glow_margin + expand_margin) as f32 * dpi_scale).round() as i32;
-                                    point.y - top_margin
-                                };
+                                let placement =
+                                    ring_window_placement(hotspot, &settings, dpi_scale);
                                 unsafe {
                                     let _ = SetWindowPos(
                                         window,
                                         HWND_TOPMOST,
-                                        x,
-                                        y,
-                                        scaled_total,
-                                        scaled_total,
+                                        placement.x,
+                                        placement.y,
+                                        placement.size,
+                                        placement.size,
                                         SWP_NOACTIVATE | SWP_NOOWNERZORDER | SWP_SHOWWINDOW,
                                     );
                                 }
@@ -558,8 +597,16 @@ mod imp {
                                     && last_debug_log.elapsed() >= Duration::from_millis(500)
                                 {
                                     eprintln!(
-                                        "[cursor-ring] move x={} y={} total_size={}",
-                                        point.x, point.y, scaled_total
+                                        "[cursor-ring] hotspot=({}, {}) center=({:.1}, {:.1}) r={:.1} mode={:?} win=({}, {}) size={}",
+                                        point.x,
+                                        point.y,
+                                        placement.center.x,
+                                        placement.center.y,
+                                        placement.radius,
+                                        settings.anchor_mode,
+                                        placement.x,
+                                        placement.y,
+                                        placement.size
                                     );
                                     last_debug_log = Instant::now();
                                 }
@@ -579,7 +626,7 @@ mod imp {
 
                 if let Some(window) = hwnd {
                     unsafe {
-                        ShowWindow(window, SW_HIDE);
+                        let _ = ShowWindow(window, SW_HIDE);
                         let _ = DestroyWindow(window);
                     }
                 }
@@ -635,3 +682,27 @@ mod imp {
 }
 
 pub use imp::CursorRingController;
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn cursor_highlight_center_centered_mode_uses_hotspot() {
+        let p = Vec2 { x: 100.0, y: 80.0 };
+        let center = cursor_highlight_center(p, 30.0, 6.0, CursorAnchorMode::Centered);
+        assert_eq!(center.x, p.x);
+        assert_eq!(center.y, p.y);
+    }
+
+    #[test]
+    fn cursor_highlight_center_lower_right_edge_mode_offsets_up_left() {
+        let p = Vec2 { x: 100.0, y: 100.0 };
+        let center =
+            cursor_highlight_center(p, 20.0, 4.0, CursorAnchorMode::HotspotAtLowerRightEdge);
+
+        let expected_offset = (20.0 + 2.0) * std::f32::consts::FRAC_1_SQRT_2;
+        assert!((center.x - (p.x - expected_offset)).abs() < 0.001);
+        assert!((center.y - (p.y - expected_offset)).abs() < 0.001);
+    }
+}
