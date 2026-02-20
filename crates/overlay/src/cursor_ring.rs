@@ -82,7 +82,8 @@ mod imp {
     use windows::Win32::UI::WindowsAndMessaging::{
         CreateWindowExW, DestroyWindow, GetCursorPos, IsWindow, SetLayeredWindowAttributes,
         SetWindowPos, ShowWindow, HWND_TOPMOST, LWA_ALPHA, LWA_COLORKEY, SWP_NOACTIVATE,
-        SWP_NOOWNERZORDER, SWP_SHOWWINDOW, SW_HIDE, SW_SHOWNOACTIVATE, WINDOW_EX_STYLE,
+        SWP_NOMOVE, SWP_NOOWNERZORDER, SWP_SHOWWINDOW, SW_HIDE, SW_SHOWNOACTIVATE,
+        WINDOW_EX_STYLE,
         WS_EX_LAYERED, WS_EX_NOACTIVATE, WS_EX_TOOLWINDOW, WS_EX_TOPMOST, WS_EX_TRANSPARENT,
         WS_POPUP,
     };
@@ -502,6 +503,10 @@ mod imp {
                             };
                             let scaled_total = scaled_window_size(&scaled_settings);
                             unsafe {
+                                // SWP_NOMOVE: only resize, don't relocate to
+                                // (0,0) — the positioning block below handles
+                                // placement.  Without this the window flashes
+                                // at the screen origin on every animation frame.
                                 let _ = SetWindowPos(
                                     window,
                                     HWND_TOPMOST,
@@ -509,7 +514,10 @@ mod imp {
                                     0,
                                     scaled_total,
                                     scaled_total,
-                                    SWP_NOACTIVATE | SWP_NOOWNERZORDER | SWP_SHOWWINDOW,
+                                    SWP_NOMOVE
+                                        | SWP_NOACTIVATE
+                                        | SWP_NOOWNERZORDER
+                                        | SWP_SHOWWINDOW,
                                 );
                                 ShowWindow(window, SW_SHOWNOACTIVATE);
                             }
