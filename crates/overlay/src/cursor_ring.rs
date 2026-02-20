@@ -23,7 +23,8 @@ pub struct CursorRingSettings {
     pub click_accent_g: u8,
     pub click_accent_b: u8,
     /// When true, the cursor hotspot is at the center of the circle.
-    /// When false, the cursor hotspot sits on the top edge of the circle.
+    /// When false, the cursor hotspot sits on the lower-right edge of the circle
+    /// (circle shifts up-left from the arrow tip).
     pub hotspot_center: bool,
 }
 
@@ -533,14 +534,24 @@ mod imp {
                                     settings.diameter_px + glow_margin * 2 + expand_margin * 2;
                                 let scaled_total =
                                     (total_size_base as f32 * dpi_scale).round() as i32;
-                                let x = point.x - (scaled_total / 2);
-                                let y = if settings.hotspot_center {
-                                    point.y - (scaled_total / 2)
+                                let (x, y) = if settings.hotspot_center {
+                                    // Centered: circle center = cursor hotspot.
+                                    (
+                                        point.x - (scaled_total / 2),
+                                        point.y - (scaled_total / 2),
+                                    )
                                 } else {
-                                    // Edge mode: cursor tip sits on the top edge of the circle.
-                                    // The circle starts at (glow_margin + expand_margin) inside the window.
-                                    let top_margin = ((glow_margin + expand_margin) as f32 * dpi_scale).round() as i32;
-                                    point.y - top_margin
+                                    // Lower-right edge: cursor hotspot sits on the
+                                    // circle boundary at 45° down-right from center.
+                                    // d = normalize(1,1) = (1/√2, 1/√2).
+                                    // circle_center = hotspot - d * r
+                                    // window_pos = circle_center - scaled_total/2
+                                    let r = settings.diameter_px as f32 * dpi_scale * 0.5;
+                                    let offset = (r * std::f32::consts::FRAC_1_SQRT_2).round() as i32;
+                                    (
+                                        point.x - offset - (scaled_total / 2),
+                                        point.y - offset - (scaled_total / 2),
+                                    )
                                 };
                                 unsafe {
                                     let _ = SetWindowPos(
@@ -557,9 +568,11 @@ mod imp {
                                     && moved
                                     && last_debug_log.elapsed() >= Duration::from_millis(500)
                                 {
+                                    let mode = if settings.hotspot_center { "centered" } else { "lower-right-edge" };
+                                    let r = settings.diameter_px as f32 * dpi_scale * 0.5;
                                     eprintln!(
-                                        "[cursor-ring] move x={} y={} total_size={}",
-                                        point.x, point.y, scaled_total
+                                        "[cursor-ring] mode={} hotspot=({},{}) r={:.1} window=({},{}) total_size={}",
+                                        mode, point.x, point.y, r, x, y, scaled_total
                                     );
                                     last_debug_log = Instant::now();
                                 }

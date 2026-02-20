@@ -747,6 +747,15 @@ fn tab_cursor(app: &mut App, ui: &mut egui::Ui) {
             dirty |= toggle_row(ui, "toggle_click_anim", "Enable click animation", &mut app.draft.enable_click_animation);
             ui.add_space(2.0);
             dirty |= toggle_row(ui, "toggle_cursor_center", "Center cursor in circle", &mut app.draft.cursor_hotspot_center);
+            ui.horizontal(|ui| {
+                ui.add_space(4.0);
+                let hint = if app.draft.cursor_hotspot_center {
+                    "Arrow tip at center of circle"
+                } else {
+                    "Arrow tip at lower-right edge of circle"
+                };
+                ui.label(egui::RichText::new(hint).color(MUTED_TEXT).size(10.0));
+            });
 
             if dirty {
                 app.apply();
