@@ -544,7 +544,10 @@ mod tests {
         assert_eq!(CursorTheme::RedDot.desc().shape, CursorShape::FilledDot);
         assert_eq!(CursorTheme::YellowPulse.desc().shape, CursorShape::Ring);
         assert_eq!(CursorTheme::PurpleHaze.desc().shape, CursorShape::Ring);
-        assert_eq!(CursorTheme::WhiteCircle.desc().shape, CursorShape::FilledDot);
+        assert_eq!(
+            CursorTheme::WhiteCircle.desc().shape,
+            CursorShape::FilledDot
+        );
     }
 
     #[test]
@@ -554,7 +557,9 @@ mod tests {
         // BlueGlow has glow
         assert!(CursorTheme::BlueGlow.desc().default_glow > 0.0);
         // PurpleHaze has the most glow
-        assert!(CursorTheme::PurpleHaze.desc().default_glow > CursorTheme::BlueGlow.desc().default_glow);
+        assert!(
+            CursorTheme::PurpleHaze.desc().default_glow > CursorTheme::BlueGlow.desc().default_glow
+        );
     }
 
     #[test]

@@ -18,8 +18,8 @@ use eframe::egui;
 use eframe::epaint::Rgba;
 use keyoverlay_core::{AppConfig, OverlayPosition, SharedConfig};
 use keyoverlay_input::{InputEvent, Key, MouseButton, ScrollDirection};
-use sound_engine::{SoundEngine, SoundSettings};
 use mouse_icon::{draw_mouse_icon, MouseHighlight, ScrollArrowDirection};
+use sound_engine::{SoundEngine, SoundSettings};
 
 use win_region::{
     apply_no_activate_styles, apply_tray_region_hwnd_with_redraw, disable_dwm_transitions,
@@ -986,14 +986,17 @@ impl App {
         let token_count_changed = pill_count != self.prev_token_count;
         self.prev_token_count = pill_count;
 
-        if token_count_changed || (self.tray_state.pill_w_target - self.tray_state.pill_w).abs() > 40.0 {
+        if token_count_changed
+            || (self.tray_state.pill_w_target - self.tray_state.pill_w).abs() > 40.0
+        {
             // Snap: jump directly to target width for instant visibility.
             self.tray_state.pill_w = self.tray_state.pill_w_target;
             self.tray_state.tray_alpha = 1.0;
         } else {
             let k = 20.0;
             let factor = 1.0 - (-k * dt.max(0.0)).exp();
-            self.tray_state.pill_w += (self.tray_state.pill_w_target - self.tray_state.pill_w) * factor;
+            self.tray_state.pill_w +=
+                (self.tray_state.pill_w_target - self.tray_state.pill_w) * factor;
             self.tray_state.tray_alpha += (1.0 - self.tray_state.tray_alpha) * factor;
         }
 
@@ -1216,8 +1219,7 @@ impl eframe::App for App {
             // Forward mouse clicks to cursor ring for click animation
             if let InputEvent::MouseClick(ref click_ev) = event {
                 if click_ev.is_down {
-                    self.cursor_ring
-                        .notify_click(ClickEvent { is_down: true });
+                    self.cursor_ring.notify_click(ClickEvent { is_down: true });
                 }
             }
             // Play keystroke sound on initial keydown (skip modifier-only presses)
@@ -1332,9 +1334,7 @@ impl eframe::App for App {
         }
 
         let was_minimized = self.ui_minimized;
-        self.ui_minimized = ctx
-            .input(|i| i.viewport().minimized)
-            .unwrap_or(false);
+        self.ui_minimized = ctx.input(|i| i.viewport().minimized).unwrap_or(false);
 
         if self.ui_minimized && !was_minimized {
             // Lazily find and cache the main window HWND.
