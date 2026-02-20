@@ -1,1 +1,11 @@
+# Force LF for Rust + common text
+*.rs   text eol=lf
+*.toml text eol=lf
+*.md   text eol=lf
+*.yml  text eol=lf
+*.yaml text eol=lf
+*.json text eol=lf
+*.txt  text eol=lf
+
+# Default behavior
 * text=auto eol=lf
