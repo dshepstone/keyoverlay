@@ -319,8 +319,8 @@ pub struct AppConfig {
     #[serde(default)]
     pub enable_click_animation: bool,
     /// When true, the cursor hotspot (arrow tip) is at the center of the circle.
-    /// When false, the cursor hotspot sits on the lower-right edge of the circle
-    /// (the circle shifts up-left from the arrow tip at 45°).
+    /// When false, the cursor hotspot touches the right edge of the circle
+    /// (the circle shifts left from the arrow tip).
     #[serde(default = "default_cursor_hotspot_center")]
     pub cursor_hotspot_center: bool,
 

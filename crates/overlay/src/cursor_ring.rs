@@ -23,8 +23,8 @@ pub struct CursorRingSettings {
     pub click_accent_g: u8,
     pub click_accent_b: u8,
     /// When true, the cursor hotspot is at the center of the circle.
-    /// When false, the cursor hotspot sits on the lower-right edge of the circle
-    /// (circle shifts up-left from the arrow tip at 45°).
+    /// When false, the cursor hotspot touches the right edge of the circle
+    /// (circle shifts left from the arrow tip).
     pub hotspot_center: bool,
 }
 
@@ -540,16 +540,12 @@ mod imp {
                                     // Centered: top-left = mouse - radius.
                                     (point.x - radius, point.y - radius)
                                 } else {
-                                    // Lower-right edge mode: hotspot is on the circle boundary at 45°.
-                                    // d = normalize(1,1) = (1/√2, 1/√2)
-                                    // center = hotspot - d * radius
-                                    // top-left = center - total_size/2
-                                    let edge_offset =
-                                        (radius as f32 * std::f32::consts::FRAC_1_SQRT_2).round()
-                                            as i32;
+                                    // Non-centered mode: cursor hotspot touches the circle's right edge.
+                                    // circle_center = hotspot - (radius, 0)
+                                    // window_top_left = circle_center - scaled_total/2
                                     (
-                                        point.x - edge_offset - (scaled_total / 2),
-                                        point.y - edge_offset - (scaled_total / 2),
+                                        point.x - radius - (scaled_total / 2),
+                                        point.y - (scaled_total / 2),
                                     )
                                 };
                                 unsafe {
@@ -570,7 +566,7 @@ mod imp {
                                     let mode = if settings.hotspot_center {
                                         "centered"
                                     } else {
-                                        "lower-right-edge"
+                                        "right-edge-touch"
                                     };
                                     eprintln!(
                                         "[cursor-ring] mode={} hotspot=({},{}) radius={} window=({},{}) total_size={}",
