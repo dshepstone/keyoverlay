@@ -113,6 +113,10 @@ fn default_cursor_hide_after_ms() -> u32 {
     0
 }
 
+fn default_cursor_hotspot_center() -> bool {
+    true
+}
+
 fn default_sound_volume() -> f32 {
     0.5
 }
@@ -314,6 +318,10 @@ pub struct AppConfig {
     pub cursor_hide_after_ms: u32,
     #[serde(default)]
     pub enable_click_animation: bool,
+    /// When true, the cursor hotspot (arrow tip) is at the center of the circle.
+    /// When false, the cursor hotspot sits on the top edge of the circle.
+    #[serde(default = "default_cursor_hotspot_center")]
+    pub cursor_hotspot_center: bool,
 
     // ── Sounds ──
     #[serde(default)]
@@ -383,6 +391,7 @@ impl Default for AppConfig {
             cursor_glow: default_cursor_glow(),
             cursor_hide_after_ms: default_cursor_hide_after_ms(),
             enable_click_animation: false,
+            cursor_hotspot_center: true,
 
             enable_keystroke_sounds: false,
             sound_volume: default_sound_volume(),

@@ -745,6 +745,8 @@ fn tab_cursor(app: &mut App, ui: &mut egui::Ui) {
             });
             ui.add_space(4.0);
             dirty |= toggle_row(ui, "toggle_click_anim", "Enable click animation", &mut app.draft.enable_click_animation);
+            ui.add_space(2.0);
+            dirty |= toggle_row(ui, "toggle_cursor_center", "Center cursor in circle", &mut app.draft.cursor_hotspot_center);
 
             if dirty {
                 app.apply();

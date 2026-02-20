@@ -22,6 +22,9 @@ pub struct CursorRingSettings {
     pub click_accent_r: u8,
     pub click_accent_g: u8,
     pub click_accent_b: u8,
+    /// When true, the cursor hotspot is at the center of the circle.
+    /// When false, the cursor hotspot sits on the top edge of the circle.
+    pub hotspot_center: bool,
 }
 
 impl CursorRingSettings {
@@ -49,6 +52,7 @@ impl CursorRingSettings {
             click_accent_r: desc.click_accent.r,
             click_accent_g: desc.click_accent.g,
             click_accent_b: desc.click_accent.b,
+            hotspot_center: cfg.cursor_hotspot_center,
         }
     }
 }
@@ -350,6 +354,7 @@ mod imp {
                     click_accent_r: 180,
                     click_accent_g: 255,
                     click_accent_b: 180,
+                    hotspot_center: true,
                 };
 
                 // Click animation state
@@ -529,7 +534,14 @@ mod imp {
                                 let scaled_total =
                                     (total_size_base as f32 * dpi_scale).round() as i32;
                                 let x = point.x - (scaled_total / 2);
-                                let y = point.y - (scaled_total / 2);
+                                let y = if settings.hotspot_center {
+                                    point.y - (scaled_total / 2)
+                                } else {
+                                    // Edge mode: cursor tip sits on the top edge of the circle.
+                                    // The circle starts at (glow_margin + expand_margin) inside the window.
+                                    let top_margin = ((glow_margin + expand_margin) as f32 * dpi_scale).round() as i32;
+                                    point.y - top_margin
+                                };
                                 unsafe {
                                     let _ = SetWindowPos(
                                         window,
