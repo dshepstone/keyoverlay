@@ -23,8 +23,8 @@ pub struct CursorRingSettings {
     pub click_accent_g: u8,
     pub click_accent_b: u8,
     /// When true, the cursor hotspot is at the center of the circle.
-    /// When false, the cursor hotspot touches the right edge of the circle
-    /// (circle shifts left from the arrow tip).
+    /// When false, the cursor hotspot is anchored to the circle's bottom-right edge
+    /// (circle shifts up-left from the arrow tip).
     pub hotspot_center: bool,
 }
 
@@ -313,6 +313,29 @@ mod imp {
         }
     }
 
+    fn calculate_overlay_pos(
+        mouse_pos: (i32, i32),
+        diameter_px: i32,
+        center_cursor: bool,
+    ) -> (i32, i32) {
+        let (mx, my) = mouse_pos;
+        let diameter = diameter_px.max(1) as f32;
+        if center_cursor {
+            // Tip at center: top-left = mouse - radius.
+            let radius = diameter * 0.5;
+            (
+                (mx as f32 - radius).round() as i32,
+                (my as f32 - radius).round() as i32,
+            )
+        } else {
+            // Tip at bottom-right edge: top-left = mouse - diameter.
+            (
+                (mx as f32 - diameter).round() as i32,
+                (my as f32 - diameter).round() as i32,
+            )
+        }
+    }
+
     /// Internal shared state between controller and render thread.
     struct SharedState {
         settings: CursorRingSettings,
@@ -534,20 +557,18 @@ mod imp {
                                     settings.diameter_px + glow_margin * 2 + expand_margin * 2;
                                 let scaled_total =
                                     (total_size_base as f32 * dpi_scale).round() as i32;
-                                let radius =
-                                    (settings.diameter_px as f32 * dpi_scale * 0.5).round() as i32;
-                                let (x, y) = if settings.hotspot_center {
-                                    // Centered: top-left = mouse - radius.
-                                    (point.x - radius, point.y - radius)
-                                } else {
-                                    // Non-centered mode: cursor hotspot touches the circle's right edge.
-                                    // circle_center = hotspot - (radius, 0)
-                                    // window_top_left = circle_center - scaled_total/2
-                                    (
-                                        point.x - radius - (scaled_total / 2),
-                                        point.y - (scaled_total / 2),
-                                    )
-                                };
+                                let scaled_diameter =
+                                    (settings.diameter_px as f32 * dpi_scale).round() as i32;
+
+                                // Extra window margins (glow/click-expand) around the circle.
+                                let margin = (scaled_total - scaled_diameter).max(0) / 2;
+                                let (circle_x, circle_y) = calculate_overlay_pos(
+                                    (point.x, point.y),
+                                    scaled_diameter,
+                                    settings.hotspot_center,
+                                );
+                                let x = circle_x - margin;
+                                let y = circle_y - margin;
                                 unsafe {
                                     let _ = SetWindowPos(
                                         window,
@@ -566,11 +587,11 @@ mod imp {
                                     let mode = if settings.hotspot_center {
                                         "centered"
                                     } else {
-                                        "right-edge-touch"
+                                        "bottom-right-edge"
                                     };
                                     eprintln!(
-                                        "[cursor-ring] mode={} hotspot=({},{}) radius={} window=({},{}) total_size={}",
-                                        mode, point.x, point.y, radius, x, y, scaled_total
+                                        "[cursor-ring] mode={} hotspot=({},{}) diameter={} window=({},{}) total_size={}",
+                                        mode, point.x, point.y, scaled_diameter, x, y, scaled_total
                                     );
                                     last_debug_log = Instant::now();
                                 }
