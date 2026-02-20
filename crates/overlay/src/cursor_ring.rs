@@ -332,6 +332,51 @@ mod imp {
         }
     }
 
+    #[derive(Clone, Copy, Debug)]
+    struct RingWindowPlacement {
+        x: i32,
+        y: i32,
+        size: i32,
+        center: Vec2,
+        radius: f32,
+    }
+
+    fn ring_window_placement(
+        hotspot: Vec2,
+        settings: &CursorRingSettings,
+        dpi_scale: f32,
+    ) -> RingWindowPlacement {
+        let diameter = settings.diameter_px as f32 * dpi_scale;
+        let radius = diameter * 0.5;
+        let stroke = settings.thickness_px as f32 * dpi_scale;
+
+        let glow_margin = if settings.glow > 0.0 {
+            settings.diameter_px as f32 * settings.glow * 0.5 * dpi_scale
+        } else {
+            0.0
+        };
+        let click_margin = if settings.click_animation {
+            settings.diameter_px as f32 * 0.3 * dpi_scale
+        } else {
+            0.0
+        };
+        let margin = glow_margin + click_margin;
+
+        let center = cursor_highlight_center(hotspot, radius, stroke, settings.anchor_mode);
+        let center_in_window = margin + radius;
+        let size = (diameter + margin * 2.0).round() as i32;
+        let x = (center.x - center_in_window).round() as i32;
+        let y = (center.y - center_in_window).round() as i32;
+
+        RingWindowPlacement {
+            x,
+            y,
+            size,
+            center,
+            radius,
+        }
+    }
+
     /// Internal shared state between controller and render thread.
     struct SharedState {
         settings: CursorRingSettings,
@@ -449,27 +494,19 @@ mod imp {
 
                         if needs_redraw {
                             let dpi_scale = scale_for_dpi(window);
-                            let glow_margin = if settings.glow > 0.0 {
-                                (settings.diameter_px as f32 * settings.glow * 0.5).round() as i32
-                            } else {
-                                0
-                            };
-                            let expand_margin = if settings.click_animation {
-                                (settings.diameter_px as f32 * 0.3).round() as i32
-                            } else {
-                                0
-                            };
-                            let total_size_base =
-                                settings.diameter_px + glow_margin * 2 + expand_margin * 2;
-                            let scaled_total = (total_size_base as f32 * dpi_scale).round() as i32;
+                            let placement = ring_window_placement(
+                                Vec2 { x: 0.0, y: 0.0 },
+                                &settings,
+                                dpi_scale,
+                            );
                             unsafe {
                                 let _ = SetWindowPos(
                                     window,
                                     HWND_TOPMOST,
                                     0,
                                     0,
-                                    scaled_total,
-                                    scaled_total,
+                                    placement.size,
+                                    placement.size,
                                     SWP_NOACTIVATE | SWP_NOOWNERZORDER | SWP_SHOWWINDOW,
                                 );
                                 let _ = ShowWindow(window, SW_SHOWNOACTIVATE);
@@ -538,43 +575,20 @@ mod imp {
 
                             if (moved || due) && !hidden_by_idle {
                                 let dpi_scale = scale_for_dpi(window);
-                                let glow_margin = if settings.glow > 0.0 {
-                                    (settings.diameter_px as f32 * settings.glow * 0.5).round()
-                                        as i32
-                                } else {
-                                    0
-                                };
-                                let expand_margin = if settings.click_animation {
-                                    (settings.diameter_px as f32 * 0.3).round() as i32
-                                } else {
-                                    0
-                                };
-                                let total_size_base =
-                                    settings.diameter_px + glow_margin * 2 + expand_margin * 2;
-                                let scaled_total =
-                                    (total_size_base as f32 * dpi_scale).round() as i32;
-                                let scaled_radius = (settings.diameter_px as f32 * dpi_scale) * 0.5;
-                                let scaled_stroke = settings.thickness_px as f32 * dpi_scale;
                                 let hotspot = Vec2 {
                                     x: point.x as f32,
                                     y: point.y as f32,
                                 };
-                                let center = cursor_highlight_center(
-                                    hotspot,
-                                    scaled_radius,
-                                    scaled_stroke,
-                                    settings.anchor_mode,
-                                );
-                                let x = (center.x - (scaled_total as f32 * 0.5)).round() as i32;
-                                let y = (center.y - (scaled_total as f32 * 0.5)).round() as i32;
+                                let placement =
+                                    ring_window_placement(hotspot, &settings, dpi_scale);
                                 unsafe {
                                     let _ = SetWindowPos(
                                         window,
                                         HWND_TOPMOST,
-                                        x,
-                                        y,
-                                        scaled_total,
-                                        scaled_total,
+                                        placement.x,
+                                        placement.y,
+                                        placement.size,
+                                        placement.size,
                                         SWP_NOACTIVATE | SWP_NOOWNERZORDER | SWP_SHOWWINDOW,
                                     );
                                 }
@@ -583,14 +597,16 @@ mod imp {
                                     && last_debug_log.elapsed() >= Duration::from_millis(500)
                                 {
                                     eprintln!(
-                                        "[cursor-ring] hotspot=({}, {}) center=({:.1}, {:.1}) r={:.1} mode={:?} total_size={}",
+                                        "[cursor-ring] hotspot=({}, {}) center=({:.1}, {:.1}) r={:.1} mode={:?} win=({}, {}) size={}",
                                         point.x,
                                         point.y,
-                                        center.x,
-                                        center.y,
-                                        scaled_radius,
+                                        placement.center.x,
+                                        placement.center.y,
+                                        placement.radius,
                                         settings.anchor_mode,
-                                        scaled_total
+                                        placement.x,
+                                        placement.y,
+                                        placement.size
                                     );
                                     last_debug_log = Instant::now();
                                 }
