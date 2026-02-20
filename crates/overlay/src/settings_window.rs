@@ -1,7 +1,7 @@
 use std::collections::HashSet;
 
 use eframe::egui;
-use keyoverlay_core::{CursorTheme, OverlayLayout, OverlayPosition, Theme};
+use keyoverlay_core::{CursorAnchorMode, CursorTheme, OverlayLayout, OverlayPosition, Theme};
 
 use crate::theme::{c2e, e2c};
 use crate::App;
@@ -746,7 +746,15 @@ fn tab_cursor(app: &mut App, ui: &mut egui::Ui) {
             ui.add_space(4.0);
             dirty |= toggle_row(ui, "toggle_click_anim", "Enable click animation", &mut app.draft.enable_click_animation);
             ui.add_space(2.0);
-            dirty |= toggle_row(ui, "toggle_cursor_center", "Center cursor in circle", &mut app.draft.cursor_hotspot_center);
+            let mut center_cursor = app.draft.cursor_anchor_mode == CursorAnchorMode::Centered;
+            if toggle_row(ui, "toggle_cursor_center", "Center cursor in circle", &mut center_cursor) {
+                app.draft.cursor_anchor_mode = if center_cursor {
+                    CursorAnchorMode::Centered
+                } else {
+                    CursorAnchorMode::HotspotAtLowerRightEdge
+                };
+                dirty = true;
+            }
 
             if dirty {
                 app.apply();

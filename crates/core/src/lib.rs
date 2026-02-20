@@ -113,8 +113,29 @@ fn default_cursor_hide_after_ms() -> u32 {
     0
 }
 
-fn default_cursor_hotspot_center() -> bool {
-    true
+fn default_cursor_anchor_mode() -> CursorAnchorMode {
+    CursorAnchorMode::Centered
+}
+
+fn deserialize_cursor_anchor_mode<'de, D>(deserializer: D) -> Result<CursorAnchorMode, D::Error>
+where
+    D: serde::Deserializer<'de>,
+{
+    #[derive(Deserialize)]
+    #[serde(untagged)]
+    enum CursorAnchorModeRepr {
+        Mode(CursorAnchorMode),
+        LegacyBool(bool),
+    }
+
+    match CursorAnchorModeRepr::deserialize(deserializer)? {
+        CursorAnchorModeRepr::Mode(mode) => Ok(mode),
+        CursorAnchorModeRepr::LegacyBool(centered) => Ok(if centered {
+            CursorAnchorMode::Centered
+        } else {
+            CursorAnchorMode::HotspotAtLowerRightEdge
+        }),
+    }
 }
 
 fn default_sound_volume() -> f32 {
@@ -135,6 +156,12 @@ pub enum CursorTheme {
     YellowPulse,
     PurpleHaze,
     WhiteCircle,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+pub enum CursorAnchorMode {
+    Centered,
+    HotspotAtLowerRightEdge,
 }
 
 /// Whether a cursor theme renders as a ring (stroke) or filled circle.
@@ -318,10 +345,12 @@ pub struct AppConfig {
     pub cursor_hide_after_ms: u32,
     #[serde(default)]
     pub enable_click_animation: bool,
-    /// When true, the cursor hotspot (arrow tip) is at the center of the circle.
-    /// When false, the cursor hotspot sits on the top edge of the circle.
-    #[serde(default = "default_cursor_hotspot_center")]
-    pub cursor_hotspot_center: bool,
+    /// Anchoring mode used to position the cursor highlight relative to the cursor hotspot.
+    #[serde(
+        default = "default_cursor_anchor_mode",
+        deserialize_with = "deserialize_cursor_anchor_mode"
+    )]
+    pub cursor_anchor_mode: CursorAnchorMode,
 
     // ── Sounds ──
     #[serde(default)]
@@ -391,7 +420,7 @@ impl Default for AppConfig {
             cursor_glow: default_cursor_glow(),
             cursor_hide_after_ms: default_cursor_hide_after_ms(),
             enable_click_animation: false,
-            cursor_hotspot_center: true,
+            cursor_anchor_mode: CursorAnchorMode::Centered,
 
             enable_keystroke_sounds: false,
             sound_volume: default_sound_volume(),
@@ -479,6 +508,7 @@ mod tests {
         config.cursor_glow = 0.5;
         config.cursor_hide_after_ms = 1500;
         config.enable_click_animation = true;
+        config.cursor_anchor_mode = CursorAnchorMode::HotspotAtLowerRightEdge;
         config.enable_keystroke_sounds = true;
         config.sound_volume = 0.8;
         config.sound_preset = "Mechanical".to_string();
@@ -494,6 +524,10 @@ mod tests {
         assert!((restored.cursor_glow - 0.5).abs() < f32::EPSILON);
         assert_eq!(restored.cursor_hide_after_ms, 1500);
         assert_eq!(restored.enable_click_animation, true);
+        assert_eq!(
+            restored.cursor_anchor_mode,
+            CursorAnchorMode::HotspotAtLowerRightEdge
+        );
         assert_eq!(restored.enable_keystroke_sounds, true);
         assert!((restored.sound_volume - 0.8).abs() < f32::EPSILON);
         assert_eq!(restored.sound_preset, "Mechanical");
@@ -509,6 +543,7 @@ mod tests {
         assert!((config.cursor_glow).abs() < f32::EPSILON);
         assert_eq!(config.cursor_hide_after_ms, 0);
         assert!(!config.enable_click_animation);
+        assert_eq!(config.cursor_anchor_mode, CursorAnchorMode::Centered);
         assert!(!config.enable_keystroke_sounds);
         assert!((config.sound_volume - 0.5).abs() < f32::EPSILON);
         assert_eq!(config.sound_preset, "Typewriter");
@@ -537,13 +572,34 @@ mod tests {
     }
 
     #[test]
+    fn cursor_anchor_mode_deserializes_legacy_bool() {
+        let mut config = AppConfig::default();
+        config.cursor_anchor_mode = CursorAnchorMode::Centered;
+        let mut json: serde_json::Value =
+            serde_json::from_str(&serde_json::to_string(&config).expect("serialize config"))
+                .expect("parse serialized config");
+        json["cursor_anchor_mode"] = serde_json::Value::Bool(false);
+
+        let restored: AppConfig =
+            serde_json::from_value(json).expect("deserialize legacy bool config");
+
+        assert_eq!(
+            restored.cursor_anchor_mode,
+            CursorAnchorMode::HotspotAtLowerRightEdge
+        );
+    }
+
+    #[test]
     fn cursor_theme_shapes() {
         assert_eq!(CursorTheme::GreenRing.desc().shape, CursorShape::Ring);
         assert_eq!(CursorTheme::BlueGlow.desc().shape, CursorShape::Ring);
         assert_eq!(CursorTheme::RedDot.desc().shape, CursorShape::FilledDot);
         assert_eq!(CursorTheme::YellowPulse.desc().shape, CursorShape::Ring);
         assert_eq!(CursorTheme::PurpleHaze.desc().shape, CursorShape::Ring);
-        assert_eq!(CursorTheme::WhiteCircle.desc().shape, CursorShape::FilledDot);
+        assert_eq!(
+            CursorTheme::WhiteCircle.desc().shape,
+            CursorShape::FilledDot
+        );
     }
 
     #[test]
@@ -553,7 +609,9 @@ mod tests {
         // BlueGlow has glow
         assert!(CursorTheme::BlueGlow.desc().default_glow > 0.0);
         // PurpleHaze has the most glow
-        assert!(CursorTheme::PurpleHaze.desc().default_glow > CursorTheme::BlueGlow.desc().default_glow);
+        assert!(
+            CursorTheme::PurpleHaze.desc().default_glow > CursorTheme::BlueGlow.desc().default_glow
+        );
     }
 
     #[test]
