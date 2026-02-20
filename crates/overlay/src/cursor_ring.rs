@@ -23,7 +23,8 @@ pub struct CursorRingSettings {
     pub click_accent_g: u8,
     pub click_accent_b: u8,
     /// When true, the cursor hotspot is at the center of the circle.
-    /// When false, the cursor hotspot is used as the circle's top-left origin.
+    /// When false, the cursor hotspot is anchored to the circle's bottom-right edge
+    /// (circle shifts up-left from the arrow tip).
     pub hotspot_center: bool,
 }
 
@@ -311,15 +312,35 @@ mod imp {
             let _ = SetLayeredWindowAttributes(hwnd, COLORREF(0), alpha, LWA_COLORKEY | LWA_ALPHA);
         }
     }
-    fn get_draw_origin(mx: f32, my: f32, size: f32, is_centered: bool) -> (f32, f32) {
+    fn get_active_origin(mouse_pos: (f32, f32), size: f32, is_centered: bool) -> (f32, f32) {
+        let (mx, my) = mouse_pos;
         if is_centered {
-            // State A: cursor tip at circle center.
+            // Cursor tip at center of the circle.
             let half = size * 0.5;
             (mx - half, my - half)
         } else {
-            // State B: draw from raw cursor coordinates (top-left origin).
-            (mx, my)
+            // Cursor tip anchored at the circle's bottom-right edge.
+            (mx - size, my - size)
         }
+    }
+
+    fn get_window_origin(
+        mouse_pos: (i32, i32),
+        diameter_px: i32,
+        total_size_px: i32,
+        is_centered: bool,
+    ) -> (i32, i32) {
+        let diameter = diameter_px.max(1) as f32;
+        let margin = (total_size_px - diameter_px).max(0) / 2;
+        let (draw_x, draw_y) = get_active_origin(
+            (mouse_pos.0 as f32, mouse_pos.1 as f32),
+            diameter,
+            is_centered,
+        );
+        (
+            draw_x.round() as i32 - margin,
+            draw_y.round() as i32 - margin,
+        )
     }
 
     /// Internal shared state between controller and render thread.
@@ -437,49 +458,57 @@ mod imp {
                         let settings_changed = settings != last_settings;
                         let needs_redraw = settings_changed || click_expand > 0.01;
 
-                        if needs_redraw {
-                            let dpi_scale = scale_for_dpi(window);
-                            let glow_margin = if settings.glow > 0.0 {
-                                (settings.diameter_px as f32 * settings.glow * 0.5).round() as i32
-                            } else {
-                                0
-                            };
-                            let expand_margin = if settings.click_animation {
-                                (settings.diameter_px as f32 * 0.3).round() as i32
-                            } else {
-                                0
-                            };
-                            let total_size_base =
-                                settings.diameter_px + glow_margin * 2 + expand_margin * 2;
-                            let scaled_total = (total_size_base as f32 * dpi_scale).round() as i32;
-                            unsafe {
-                                let _ = SetWindowPos(
-                                    window,
-                                    HWND_TOPMOST,
-                                    0,
-                                    0,
-                                    scaled_total,
-                                    scaled_total,
-                                    SWP_NOACTIVATE | SWP_NOOWNERZORDER | SWP_SHOWWINDOW,
-                                );
-                                ShowWindow(window, SW_SHOWNOACTIVATE);
-                            }
-                            set_window_alpha(window, settings.opacity);
-                            // Draw with scaled pixel dimensions
-                            let scaled_settings = CursorRingSettings {
-                                diameter_px: (settings.diameter_px as f32 * dpi_scale).round()
-                                    as i32,
-                                thickness_px: (settings.thickness_px as f32 * dpi_scale).round()
-                                    as i32,
-                                ..settings
-                            };
-                            draw_highlight(window, &scaled_settings, click_expand);
-                            last_settings = settings;
-                        }
-
                         // Track cursor position
                         let mut point = POINT::default();
                         if unsafe { GetCursorPos(&mut point) }.is_ok() {
+                            if needs_redraw {
+                                let dpi_scale = scale_for_dpi(window);
+                                let glow_margin = if settings.glow > 0.0 {
+                                    (settings.diameter_px as f32 * settings.glow * 0.5).round()
+                                        as i32
+                                } else {
+                                    0
+                                };
+                                let expand_margin = if settings.click_animation {
+                                    (settings.diameter_px as f32 * 0.3).round() as i32
+                                } else {
+                                    0
+                                };
+                                let total_size_base =
+                                    settings.diameter_px + glow_margin * 2 + expand_margin * 2;
+                                let scaled_total =
+                                    (total_size_base as f32 * dpi_scale).round() as i32;
+                                let scaled_diameter =
+                                    (settings.diameter_px as f32 * dpi_scale).round() as i32;
+                                let (x, y) = get_window_origin(
+                                    (point.x, point.y),
+                                    scaled_diameter,
+                                    scaled_total,
+                                    settings.hotspot_center,
+                                );
+                                unsafe {
+                                    let _ = SetWindowPos(
+                                        window,
+                                        HWND_TOPMOST,
+                                        x,
+                                        y,
+                                        scaled_total,
+                                        scaled_total,
+                                        SWP_NOACTIVATE | SWP_NOOWNERZORDER | SWP_SHOWWINDOW,
+                                    );
+                                    ShowWindow(window, SW_SHOWNOACTIVATE);
+                                }
+                                set_window_alpha(window, settings.opacity);
+                                // Draw with scaled pixel dimensions
+                                let scaled_settings = CursorRingSettings {
+                                    diameter_px: scaled_diameter,
+                                    thickness_px: (settings.thickness_px as f32 * dpi_scale).round()
+                                        as i32,
+                                    ..settings
+                                };
+                                draw_highlight(window, &scaled_settings, click_expand);
+                                last_settings = settings;
+                            }
                             let moved = last_cursor != Some((point.x, point.y));
                             let due = last_move.elapsed() >= Duration::from_millis(12);
 
@@ -545,17 +574,12 @@ mod imp {
                                     (total_size_base as f32 * dpi_scale).round() as i32;
                                 let scaled_diameter =
                                     (settings.diameter_px as f32 * dpi_scale).round() as i32;
-
-                                // Extra window margins (glow/click-expand) around the circle.
-                                let margin = (scaled_total - scaled_diameter).max(0) / 2;
-                                let (draw_x, draw_y) = get_draw_origin(
-                                    point.x as f32,
-                                    point.y as f32,
-                                    scaled_diameter.max(1) as f32,
+                                let (x, y) = get_window_origin(
+                                    (point.x, point.y),
+                                    scaled_diameter,
+                                    scaled_total,
                                     settings.hotspot_center,
                                 );
-                                let x = draw_x.round() as i32 - margin;
-                                let y = draw_y.round() as i32 - margin;
                                 unsafe {
                                     let _ = SetWindowPos(
                                         window,
@@ -574,7 +598,7 @@ mod imp {
                                     let mode = if settings.hotspot_center {
                                         "centered"
                                     } else {
-                                        "raw-origin"
+                                        "bottom-right-edge"
                                     };
                                     eprintln!(
                                         "[cursor-ring] mode={} hotspot=({},{}) diameter={} window=({},{}) total_size={}",
