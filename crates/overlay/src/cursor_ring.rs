@@ -136,7 +136,7 @@ mod imp {
                 (255.0 * 0.9) as u8,
                 LWA_COLORKEY | LWA_ALPHA,
             );
-            ShowWindow(hwnd, SW_SHOWNOACTIVATE);
+            let _ = ShowWindow(hwnd, SW_SHOWNOACTIVATE);
         }
 
         Some(hwnd)
@@ -474,7 +474,7 @@ mod imp {
                     if !settings.enabled {
                         if let Some(window) = hwnd.take() {
                             unsafe {
-                                ShowWindow(window, SW_HIDE);
+                                let _ = ShowWindow(window, SW_HIDE);
                                 let _ = DestroyWindow(window);
                             }
                             if debug_enabled() {
@@ -519,7 +519,7 @@ mod imp {
                                         | SWP_NOOWNERZORDER
                                         | SWP_SHOWWINDOW,
                                 );
-                                ShowWindow(window, SW_SHOWNOACTIVATE);
+                                let _ = ShowWindow(window, SW_SHOWNOACTIVATE);
                             }
                             set_window_alpha(window, settings.opacity);
                             draw_highlight(window, &scaled_settings, click_expand, scaled_total);
@@ -537,7 +537,7 @@ mod imp {
                                 if hidden_by_idle {
                                     hidden_by_idle = false;
                                     unsafe {
-                                        ShowWindow(window, SW_SHOWNOACTIVATE);
+                                        let _ = ShowWindow(window, SW_SHOWNOACTIVATE);
                                     }
                                     if debug_enabled() {
                                         eprintln!("[cursor-ring] shown (motion resumed)");
@@ -550,7 +550,7 @@ mod imp {
                                 hidden_by_idle = false;
                                 last_motion_at = Instant::now();
                                 unsafe {
-                                    ShowWindow(window, SW_SHOWNOACTIVATE);
+                                    let _ = ShowWindow(window, SW_SHOWNOACTIVATE);
                                 }
                                 if debug_enabled() {
                                     eprintln!("[cursor-ring] shown (click while idle)");
@@ -565,7 +565,7 @@ mod imp {
                             {
                                 hidden_by_idle = true;
                                 unsafe {
-                                    ShowWindow(window, SW_HIDE);
+                                    let _ = ShowWindow(window, SW_HIDE);
                                 }
                                 if debug_enabled() {
                                     eprintln!(
@@ -655,7 +655,7 @@ mod imp {
 
                 if let Some(window) = hwnd {
                     unsafe {
-                        ShowWindow(window, SW_HIDE);
+                        let _ = ShowWindow(window, SW_HIDE);
                         let _ = DestroyWindow(window);
                     }
                 }
