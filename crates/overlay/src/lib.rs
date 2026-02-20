@@ -29,7 +29,7 @@ use win_region::{
     snapshot_hwnd_state, OverlayHwnd, PillRect,
 };
 #[cfg(target_os = "windows")]
-use win_region::{hide_window, is_window_minimized, restore_window};
+use win_region::{is_window_minimized, restore_window};
 
 const OVERLAY_VIEWPORT_TITLE: &str = "KeyOverlayOverlay";
 const LARGE_KEY_FONT_BOOST: f32 = 14.0;
@@ -548,9 +548,6 @@ struct App {
     sound_engine: SoundEngine,
     /// Track whether the main UI window is minimized.
     ui_minimized: bool,
-    /// True when the window is hidden (un-minimized + invisible) to keep the
-    /// rendering pipeline alive while the user thinks it is minimized.
-    ui_hidden: bool,
     /// Previous token count for detecting token changes (combo delay fix).
     prev_token_count: usize,
     #[cfg(target_os = "windows")]
@@ -624,7 +621,6 @@ impl App {
             cursor_ring: CursorRingController::new(cursor_ring_settings),
             sound_engine: SoundEngine::new(sound_settings),
             ui_minimized: false,
-            ui_hidden: false,
             prev_token_count: 0,
             #[cfg(target_os = "windows")]
             last_viewport_minimized: None,
@@ -1374,39 +1370,24 @@ impl eframe::App for App {
         // When the settings window is minimized on Windows, the wgpu surface
         // becomes outdated (zero-size) and the rendering pipeline stops calling
         // show_viewport_immediate for the overlay.  To keep the overlay alive we
-        // intercept the minimize: immediately un-minimize the window and hide it
-        // instead (Visible(false)).  A hidden-but-restored window keeps the
-        // event loop and rendering pipeline running so the overlay viewport
-        // continues to receive frames.
+        // intercept the minimize and immediately un-minimize the window.
+        // Important: do NOT hide the settings window here; hiding removes the
+        // taskbar affordance and users can't reopen it by clicking the app icon.
+        // Keeping it restored avoids the zero-sized/outdated surface state
+        // while preserving normal taskbar behavior.
         let was_minimized = self.ui_minimized;
         self.ui_minimized = ctx.input(|i| i.viewport().minimized).unwrap_or(false);
 
         if self.ui_minimized && !was_minimized {
-            // Just became minimized — restore and hide instead so the overlay
-            // rendering pipeline stays alive.
+            // Just became minimized — restore immediately so the shared wgpu
+            // renderer doesn't get stuck on a 0x0/outdated root surface.
             ctx.send_viewport_cmd(egui::ViewportCommand::Minimized(false));
-            ctx.send_viewport_cmd(egui::ViewportCommand::Visible(false));
-            self.ui_hidden = true;
             if minimize_debug_enabled() {
-                eprintln!("[overlay-minimize] UI minimized -> hidden (overlay stays active)",);
+                eprintln!("[overlay-minimize] UI minimized -> auto-restored (taskbar remains)");
             }
         } else if !self.ui_minimized && was_minimized {
             if minimize_debug_enabled() {
                 eprintln!("[overlay-minimize] UI restored",);
-            }
-        }
-
-        // When the user clicks the taskbar icon of a hidden window, the OS
-        // delivers a restore/focus event.  Detect this and make the window
-        // visible again.
-        if self.ui_hidden && !self.ui_minimized {
-            let has_focus = ctx.input(|i| i.viewport().focused).unwrap_or(false);
-            if has_focus {
-                ctx.send_viewport_cmd(egui::ViewportCommand::Visible(true));
-                self.ui_hidden = false;
-                if minimize_debug_enabled() {
-                    eprintln!("[overlay-minimize] UI un-hidden (focus restored)");
-                }
             }
         }
 
@@ -1825,10 +1806,6 @@ impl eframe::App for App {
             // Use a very short repaint interval while keys are held to ensure
             // combos appear with minimal latency.
             ctx.request_repaint_after(Duration::from_millis(8));
-        } else if self.ui_hidden {
-            // Window is hidden (pseudo-minimized) — keep the event loop ticking
-            // at a moderate rate so the overlay viewport stays responsive.
-            ctx.request_repaint_after(Duration::from_millis(16));
         } else {
             ctx.request_repaint_after(Duration::from_millis(250));
         }
@@ -1850,11 +1827,10 @@ fn start_windows_minimize_watchdog() {
                 if is_window_minimized(hwnd) {
                     if minimize_debug_enabled() {
                         eprintln!(
-                            "[overlay-minimize] watchdog detected iconic settings window; restore+hide"
+                            "[overlay-minimize] watchdog detected iconic settings window; restoring"
                         );
                     }
                     restore_window(hwnd);
-                    hide_window(hwnd);
                     request_external_repaint();
                 }
             }
