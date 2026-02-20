@@ -871,7 +871,7 @@ fn tab_cursor(app: &mut App, ui: &mut egui::Ui) {
                 let hint = if app.draft.cursor_hotspot_center {
                     "Arrow tip at center of circle"
                 } else {
-                    "Arrow tip at bottom-right edge of circle"
+                    "Circle starts at raw cursor coordinates"
                 };
                 ui.label(egui::RichText::new(hint).color(MUTED_TEXT).size(10.0));
             });

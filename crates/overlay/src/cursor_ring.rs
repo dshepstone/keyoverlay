@@ -23,8 +23,7 @@ pub struct CursorRingSettings {
     pub click_accent_g: u8,
     pub click_accent_b: u8,
     /// When true, the cursor hotspot is at the center of the circle.
-    /// When false, the cursor hotspot is anchored to the circle's bottom-right edge
-    /// (circle shifts up-left from the arrow tip).
+    /// When false, the cursor hotspot is used as the circle's top-left origin.
     pub hotspot_center: bool,
 }
 
@@ -318,8 +317,8 @@ mod imp {
             let half = size * 0.5;
             (mx - half, my - half)
         } else {
-            // State B: cursor tip at bottom-right edge/corner anchor.
-            (mx - size, my - size)
+            // State B: draw from raw cursor coordinates (top-left origin).
+            (mx, my)
         }
     }
 
@@ -575,7 +574,7 @@ mod imp {
                                     let mode = if settings.hotspot_center {
                                         "centered"
                                     } else {
-                                        "bottom-right-edge"
+                                        "raw-origin"
                                     };
                                     eprintln!(
                                         "[cursor-ring] mode={} hotspot=({},{}) diameter={} window=({},{}) total_size={}",
