@@ -290,10 +290,20 @@ impl Painter {
         );
         let Some(width) = NonZeroU32::new(size.width) else {
             log::debug!("The window width was zero; skipping generate textures");
+            #[cfg(target_os = "windows")]
+            eprintln!(
+                "[overlay-minimize] wgpu resize skipped viewport={viewport_id:?} width=0 height={} (minimized/occluded)",
+                size.height
+            );
             return Ok(());
         };
         let Some(height) = NonZeroU32::new(size.height) else {
             log::debug!("The window height was zero; skipping generate textures");
+            #[cfg(target_os = "windows")]
+            eprintln!(
+                "[overlay-minimize] wgpu resize skipped viewport={viewport_id:?} width={} height=0 (minimized/occluded)",
+                size.width
+            );
             return Ok(());
         };
         self.resize_and_generate_depth_texture_view_and_msaa_view(viewport_id, width, height);
@@ -577,15 +587,39 @@ impl Painter {
 
         let output_frame = match output_frame {
             Ok(frame) => frame,
-            Err(err) => match (*self.configuration.on_surface_error)(err) {
-                SurfaceErrorAction::RecreateSurface => {
-                    Self::configure_surface(surface_state, render_state, &self.configuration);
-                    return (vsync_sec, None);
+            Err(err) => {
+                #[cfg(target_os = "windows")]
+                {
+                    let label = match err {
+                        wgpu::SurfaceError::Outdated => "SurfaceError::Outdated",
+                        wgpu::SurfaceError::Lost => "SurfaceError::Lost",
+                        wgpu::SurfaceError::Timeout => "SurfaceError::Timeout",
+                        wgpu::SurfaceError::OutOfMemory => "SurfaceError::OutOfMemory",
+                    };
+                    eprintln!(
+                        "[overlay-minimize] surface error viewport={viewport_id:?} error={label} size={}x{}; continuing frame for other viewports",
+                        surface_state.width,
+                        surface_state.height
+                    );
                 }
-                SurfaceErrorAction::SkipFrame => {
-                    return (vsync_sec, None);
+                match (*self.configuration.on_surface_error)(err) {
+                    SurfaceErrorAction::RecreateSurface => {
+                        #[cfg(target_os = "windows")]
+                        eprintln!(
+                            "[overlay-minimize] recreate surface viewport={viewport_id:?} (skip only this viewport frame)"
+                        );
+                        Self::configure_surface(surface_state, render_state, &self.configuration);
+                        return (vsync_sec, None);
+                    }
+                    SurfaceErrorAction::SkipFrame => {
+                        #[cfg(target_os = "windows")]
+                        eprintln!(
+                            "[overlay-minimize] skip viewport frame viewport={viewport_id:?} (global event loop keeps running)"
+                        );
+                        return (vsync_sec, None);
+                    }
                 }
-            },
+            }
         };
 
         {

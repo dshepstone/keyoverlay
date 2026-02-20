@@ -32,10 +32,10 @@ mod imp {
     use windows::Win32::UI::HiDpi::GetDpiForWindow;
     use windows::Win32::UI::WindowsAndMessaging::{
         FindWindowW, GetClassNameW, GetClientRect, GetForegroundWindow, GetWindowLongPtrW,
-        GetWindowRect, GetWindowTextW, GetWindowThreadProcessId, IsWindow, IsWindowVisible,
-        SetWindowLongPtrW, SetWindowPos, ShowWindow, GWL_EXSTYLE, GWL_STYLE, SWP_NOACTIVATE,
-        SWP_NOMOVE, SWP_NOSENDCHANGING, SWP_NOSIZE, SWP_NOZORDER, SWP_SHOWWINDOW,
-        SW_HIDE, SW_SHOWNOACTIVATE,
+        GetWindowRect, GetWindowTextW, GetWindowThreadProcessId, IsIconic, IsWindow,
+        IsWindowVisible, SetWindowLongPtrW, SetWindowPos, ShowWindow, GWL_EXSTYLE, GWL_STYLE,
+        SWP_NOACTIVATE, SWP_NOMOVE, SWP_NOSENDCHANGING, SWP_NOSIZE, SWP_NOZORDER, SWP_SHOWWINDOW,
+        SW_HIDE, SW_RESTORE, SW_SHOWNOACTIVATE,
     };
 
     use crate::overlay_startup_diagnostics;
@@ -293,6 +293,20 @@ mod imp {
         let _ = unsafe { ShowWindow(hwnd, SW_HIDE) };
     }
 
+    pub fn restore_window(hwnd: HWND) {
+        if !unsafe { IsWindow(hwnd).as_bool() } {
+            return;
+        }
+        let _ = unsafe { ShowWindow(hwnd, SW_RESTORE) };
+    }
+
+    pub fn is_window_minimized(hwnd: HWND) -> bool {
+        if !unsafe { IsWindow(hwnd).as_bool() } {
+            return false;
+        }
+        unsafe { IsIconic(hwnd).as_bool() }
+    }
+
     pub fn is_foreground_window(hwnd: HWND) -> bool {
         if !unsafe { IsWindow(hwnd).as_bool() } {
             return false;
@@ -320,7 +334,7 @@ pub use imp::{
     apply_no_activate_styles, apply_test_region, apply_tray_region,
     apply_tray_region_hwnd_with_redraw, apply_tray_region_with_redraw, disable_dwm_transitions,
     find_hwnd_by_title, force_redraw, hide_window, hwnd_is_valid, is_foreground_window,
-    show_window_no_activate, snapshot_hwnd_state,
+    is_window_minimized, restore_window, show_window_no_activate, snapshot_hwnd_state,
 };
 
 #[cfg(not(target_os = "windows"))]
@@ -331,6 +345,14 @@ pub fn show_window_no_activate(_hwnd: OverlayHwnd) {}
 
 #[cfg(not(target_os = "windows"))]
 pub fn hide_window(_hwnd: OverlayHwnd) {}
+
+#[cfg(not(target_os = "windows"))]
+pub fn restore_window(_hwnd: OverlayHwnd) {}
+
+#[cfg(not(target_os = "windows"))]
+pub fn is_window_minimized(_hwnd: OverlayHwnd) -> bool {
+    false
+}
 
 #[cfg(not(target_os = "windows"))]
 pub fn is_foreground_window(_hwnd: OverlayHwnd) -> bool {
