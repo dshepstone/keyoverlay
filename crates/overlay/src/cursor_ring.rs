@@ -23,8 +23,7 @@ pub struct CursorRingSettings {
     pub click_accent_g: u8,
     pub click_accent_b: u8,
     /// When true, the cursor hotspot is at the center of the circle.
-    /// When false, the cursor hotspot sits on the lower-right edge of the circle
-    /// (circle shifts up-left from the arrow tip).
+    /// When false, the cursor hotspot is used as the circle's top-left origin.
     pub hotspot_center: bool,
 }
 
@@ -199,7 +198,9 @@ mod imp {
                 let gg = gg.max(1);
 
                 let glow_color = rgb_to_colorref(gr, gg, gb);
-                let pen_thick = ((settings.thickness_px as f32) * (1.0 - t * 0.5)).round().max(1.0) as i32;
+                let pen_thick = ((settings.thickness_px as f32) * (1.0 - t * 0.5))
+                    .round()
+                    .max(1.0) as i32;
                 let pen = unsafe { CreatePen(PS_SOLID, pen_thick, glow_color) };
                 let old_pen = unsafe { SelectObject(dc, HGDIOBJ(pen.0)) };
                 let hollow = unsafe { GetStockObject(HOLLOW_BRUSH) };
@@ -307,8 +308,7 @@ mod imp {
     fn set_window_alpha(hwnd: HWND, opacity: f32) {
         let alpha = (opacity.clamp(0.2, 1.0) * 255.0).round() as u8;
         unsafe {
-            let _ =
-                SetLayeredWindowAttributes(hwnd, COLORREF(0), alpha, LWA_COLORKEY | LWA_ALPHA);
+            let _ = SetLayeredWindowAttributes(hwnd, COLORREF(0), alpha, LWA_COLORKEY | LWA_ALPHA);
         }
     }
 
@@ -441,8 +441,7 @@ mod imp {
                             };
                             let total_size_base =
                                 settings.diameter_px + glow_margin * 2 + expand_margin * 2;
-                            let scaled_total =
-                                (total_size_base as f32 * dpi_scale).round() as i32;
+                            let scaled_total = (total_size_base as f32 * dpi_scale).round() as i32;
                             unsafe {
                                 let _ = SetWindowPos(
                                     window,
@@ -534,24 +533,14 @@ mod imp {
                                     settings.diameter_px + glow_margin * 2 + expand_margin * 2;
                                 let scaled_total =
                                     (total_size_base as f32 * dpi_scale).round() as i32;
+                                let radius =
+                                    (settings.diameter_px as f32 * dpi_scale * 0.5).round() as i32;
                                 let (x, y) = if settings.hotspot_center {
-                                    // Centered: circle center = cursor hotspot.
-                                    (
-                                        point.x - (scaled_total / 2),
-                                        point.y - (scaled_total / 2),
-                                    )
+                                    // Centered: top-left = mouse - radius.
+                                    (point.x - radius, point.y - radius)
                                 } else {
-                                    // Lower-right edge: cursor hotspot sits on the
-                                    // circle boundary at 45° down-right from center.
-                                    // d = normalize(1,1) = (1/√2, 1/√2).
-                                    // circle_center = hotspot - d * r
-                                    // window_pos = circle_center - scaled_total/2
-                                    let r = settings.diameter_px as f32 * dpi_scale * 0.5;
-                                    let offset = (r * std::f32::consts::FRAC_1_SQRT_2).round() as i32;
-                                    (
-                                        point.x - offset - (scaled_total / 2),
-                                        point.y - offset - (scaled_total / 2),
-                                    )
+                                    // Legacy/non-centered: use cursor position as raw origin.
+                                    (point.x, point.y)
                                 };
                                 unsafe {
                                     let _ = SetWindowPos(
@@ -568,11 +557,14 @@ mod imp {
                                     && moved
                                     && last_debug_log.elapsed() >= Duration::from_millis(500)
                                 {
-                                    let mode = if settings.hotspot_center { "centered" } else { "lower-right-edge" };
-                                    let r = settings.diameter_px as f32 * dpi_scale * 0.5;
+                                    let mode = if settings.hotspot_center {
+                                        "centered"
+                                    } else {
+                                        "raw-origin"
+                                    };
                                     eprintln!(
-                                        "[cursor-ring] mode={} hotspot=({},{}) r={:.1} window=({},{}) total_size={}",
-                                        mode, point.x, point.y, r, x, y, scaled_total
+                                        "[cursor-ring] mode={} hotspot=({},{}) radius={} window=({},{}) total_size={}",
+                                        mode, point.x, point.y, radius, x, y, scaled_total
                                     );
                                     last_debug_log = Instant::now();
                                 }
