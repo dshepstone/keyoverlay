@@ -18,13 +18,13 @@ use eframe::egui;
 use eframe::epaint::Rgba;
 use keyoverlay_core::{AppConfig, OverlayPosition, SharedConfig};
 use keyoverlay_input::{InputEvent, Key, MouseButton, ScrollDirection};
-use sound_engine::{SoundEngine, SoundSettings};
 use mouse_icon::{draw_mouse_icon, MouseHighlight, ScrollArrowDirection};
+use sound_engine::{SoundEngine, SoundSettings};
 
 use win_region::{
     apply_no_activate_styles, apply_tray_region_hwnd_with_redraw, disable_dwm_transitions,
-    find_hwnd_by_title, force_redraw, hide_window, hwnd_is_valid, is_foreground_window,
-    show_window_no_activate, snapshot_hwnd_state, OverlayHwnd, PillRect,
+    find_hwnd_by_title, force_redraw, hwnd_is_valid, is_foreground_window, show_window_no_activate,
+    snapshot_hwnd_state, OverlayHwnd, PillRect,
 };
 
 const OVERLAY_VIEWPORT_TITLE: &str = "KeyOverlayOverlay";
@@ -544,11 +544,18 @@ struct App {
     sound_engine: SoundEngine,
     /// Track whether the main UI window is minimized.
     ui_minimized: bool,
-    /// True when the window is hidden (un-minimized + invisible) to keep the
-    /// rendering pipeline alive while the user thinks it is minimized.
-    ui_hidden: bool,
     /// Previous token count for detecting token changes (combo delay fix).
     prev_token_count: usize,
+    #[cfg(target_os = "windows")]
+    last_viewport_minimized: Option<bool>,
+    #[cfg(target_os = "windows")]
+    last_viewport_focused: Option<bool>,
+    #[cfg(target_os = "windows")]
+    last_viewport_size: Option<egui::Vec2>,
+    #[cfg(target_os = "windows")]
+    overlay_frame_counter: u64,
+    #[cfg(target_os = "windows")]
+    last_overlay_frame_log: Instant,
 }
 
 impl App {
@@ -610,8 +617,56 @@ impl App {
             cursor_ring: CursorRingController::new(cursor_ring_settings),
             sound_engine: SoundEngine::new(sound_settings),
             ui_minimized: false,
-            ui_hidden: false,
             prev_token_count: 0,
+            #[cfg(target_os = "windows")]
+            last_viewport_minimized: None,
+            #[cfg(target_os = "windows")]
+            last_viewport_focused: None,
+            #[cfg(target_os = "windows")]
+            last_viewport_size: None,
+            #[cfg(target_os = "windows")]
+            overlay_frame_counter: 0,
+            #[cfg(target_os = "windows")]
+            last_overlay_frame_log: Instant::now(),
+        }
+    }
+
+    #[cfg(target_os = "windows")]
+    fn log_windows_viewport_state(&mut self, ctx: &egui::Context) {
+        let (focused, minimized, inner_size) = ctx.input(|i| {
+            let vp = i.viewport();
+            (vp.focused, vp.minimized, vp.inner_rect.map(|r| r.size()))
+        });
+
+        if focused != self.last_viewport_focused {
+            self.last_viewport_focused = focused;
+            if minimize_debug_enabled() {
+                eprintln!("[overlay-minimize] WindowEvent::Focused -> {:?}", focused);
+            }
+        }
+
+        if minimized != self.last_viewport_minimized {
+            self.last_viewport_minimized = minimized;
+            if minimize_debug_enabled() {
+                eprintln!(
+                    "[overlay-minimize] WindowEvent::Minimized -> {:?}",
+                    minimized
+                );
+            }
+        }
+
+        if inner_size != self.last_viewport_size {
+            self.last_viewport_size = inner_size;
+            if minimize_debug_enabled() {
+                if let Some(size) = inner_size {
+                    eprintln!(
+                        "[overlay-minimize] WindowEvent::Resized -> {}x{}",
+                        size.x, size.y
+                    );
+                } else {
+                    eprintln!("[overlay-minimize] WindowEvent::Resized -> <none>");
+                }
+            }
         }
     }
 
@@ -978,14 +1033,17 @@ impl App {
         let token_count_changed = pill_count != self.prev_token_count;
         self.prev_token_count = pill_count;
 
-        if token_count_changed || (self.tray_state.pill_w_target - self.tray_state.pill_w).abs() > 40.0 {
+        if token_count_changed
+            || (self.tray_state.pill_w_target - self.tray_state.pill_w).abs() > 40.0
+        {
             // Snap: jump directly to target width for instant visibility.
             self.tray_state.pill_w = self.tray_state.pill_w_target;
             self.tray_state.tray_alpha = 1.0;
         } else {
             let k = 20.0;
             let factor = 1.0 - (-k * dt.max(0.0)).exp();
-            self.tray_state.pill_w += (self.tray_state.pill_w_target - self.tray_state.pill_w) * factor;
+            self.tray_state.pill_w +=
+                (self.tray_state.pill_w_target - self.tray_state.pill_w) * factor;
             self.tray_state.tray_alpha += (1.0 - self.tray_state.tray_alpha) * factor;
         }
 
@@ -1185,6 +1243,8 @@ impl eframe::App for App {
         if repaint_debug_enabled() {
             eprintln!("[overlay-repaint] update start");
         }
+        #[cfg(target_os = "windows")]
+        self.log_windows_viewport_state(ctx);
         let mut processed_events = 0usize;
         while let Ok(event) = self.rx.try_recv() {
             if !self.first_input_logged {
@@ -1208,8 +1268,7 @@ impl eframe::App for App {
             // Forward mouse clicks to cursor ring for click animation
             if let InputEvent::MouseClick(ref click_ev) = event {
                 if click_ev.is_down {
-                    self.cursor_ring
-                        .notify_click(ClickEvent { is_down: true });
+                    self.cursor_ring.notify_click(ClickEvent { is_down: true });
                 }
             }
             // Play keystroke sound on initial keydown (skip modifier-only presses)
@@ -1304,49 +1363,13 @@ impl eframe::App for App {
         }
 
         // ── Detect main UI minimize/restore ──
-        // When the settings window is minimized on Windows, the wgpu surface
-        // becomes outdated (zero-size) and the rendering pipeline stops calling
-        // show_viewport_immediate for the overlay.  To keep the overlay alive we
-        // intercept the minimize: immediately un-minimize the window and hide it
-        // instead (Visible(false)).  A hidden-but-restored window keeps the
-        // event loop and rendering pipeline running so the overlay viewport
-        // continues to receive frames.
         let was_minimized = self.ui_minimized;
-        self.ui_minimized = ctx
-            .input(|i| i.viewport().minimized)
-            .unwrap_or(false);
-
-        if self.ui_minimized && !was_minimized {
-            // Just became minimized — restore and hide instead so the overlay
-            // rendering pipeline stays alive.
-            ctx.send_viewport_cmd(egui::ViewportCommand::Minimized(false));
-            ctx.send_viewport_cmd(egui::ViewportCommand::Visible(false));
-            self.ui_hidden = true;
-            if minimize_debug_enabled() {
-                eprintln!(
-                    "[overlay-minimize] UI minimized -> hidden (overlay stays active)",
-                );
-            }
-        } else if !self.ui_minimized && was_minimized {
-            if minimize_debug_enabled() {
-                eprintln!(
-                    "[overlay-minimize] UI restored",
-                );
-            }
-        }
-
-        // When the user clicks the taskbar icon of a hidden window, the OS
-        // delivers a restore/focus event.  Detect this and make the window
-        // visible again.
-        if self.ui_hidden && !self.ui_minimized {
-            let has_focus = ctx.input(|i| i.viewport().focused).unwrap_or(false);
-            if has_focus {
-                ctx.send_viewport_cmd(egui::ViewportCommand::Visible(true));
-                self.ui_hidden = false;
-                if minimize_debug_enabled() {
-                    eprintln!("[overlay-minimize] UI un-hidden (focus restored)");
-                }
-            }
+        self.ui_minimized = ctx.input(|i| i.viewport().minimized).unwrap_or(false);
+        if self.ui_minimized != was_minimized && minimize_debug_enabled() {
+            eprintln!(
+                "[overlay-minimize] UI minimized state -> {}",
+                self.ui_minimized
+            );
         }
 
         if self.draft.overlay_enabled {
@@ -1584,7 +1607,7 @@ impl eframe::App for App {
                 }
 
                 let tray_alpha = self.tray_state.tray_alpha;
-                ctx.show_viewport_immediate(
+                ctx.show_viewport_deferred(
                     overlay_id,
                     egui::ViewportBuilder::default()
                         .with_inner_size([geometry.width_points, geometry.height_points])
@@ -1728,8 +1751,29 @@ impl eframe::App for App {
                                     }
                                 }
                             });
+
+                        // Deferred viewport mode decouples overlay repainting
+                        // from the root/settings viewport. Keep this viewport
+                        // ticking independently.
+                        ctx.request_repaint_after(Duration::from_millis(16));
                     },
                 );
+
+                #[cfg(target_os = "windows")]
+                {
+                    self.overlay_frame_counter = self.overlay_frame_counter.saturating_add(1);
+                    let frame_now = Instant::now();
+                    if minimize_debug_enabled()
+                        && frame_now.duration_since(self.last_overlay_frame_log)
+                            >= Duration::from_secs(1)
+                    {
+                        self.last_overlay_frame_log = frame_now;
+                        eprintln!(
+                            "[overlay-minimize] overlay frame heartbeat count={}",
+                            self.overlay_frame_counter
+                        );
+                    }
+                }
             }
         }
 
@@ -1748,10 +1792,6 @@ impl eframe::App for App {
             // Use a very short repaint interval while keys are held to ensure
             // combos appear with minimal latency.
             ctx.request_repaint_after(Duration::from_millis(8));
-        } else if self.ui_hidden {
-            // Window is hidden (pseudo-minimized) — keep the event loop ticking
-            // at a moderate rate so the overlay viewport stays responsive.
-            ctx.request_repaint_after(Duration::from_millis(16));
         } else {
             ctx.request_repaint_after(Duration::from_millis(250));
         }
