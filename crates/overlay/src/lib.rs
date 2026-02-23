@@ -117,6 +117,7 @@ impl SingleTileState {
         self.visible_alpha = 1.0;
     }
 
+    #[allow(dead_code)]
     fn register_release(&mut self, now: Instant) {
         self.is_down = false;
         self.down_until = None;
@@ -305,6 +306,7 @@ impl InputState {
         self.pressed_mouse_buttons.clear();
     }
 
+    #[allow(dead_code)]
     fn overlay_visible(
         &self,
         now: Instant,
@@ -328,6 +330,7 @@ impl InputState {
         self.mouse_icon_active && now.duration_since(self.last_mouse_activity) < hold_for
     }
 
+    #[allow(dead_code)]
     fn mouse_label_for_display(
         &self,
         now: Instant,
@@ -353,6 +356,7 @@ impl InputState {
         self.mouse_label.clone()
     }
 
+    #[allow(dead_code)]
     fn chord_for_display(
         &self,
         now: Instant,
@@ -377,6 +381,7 @@ impl InputState {
         None
     }
 
+    #[allow(dead_code)]
     fn mouse_highlight(&self, now: Instant, hold_for: Duration) -> MouseHighlight {
         if self.pressed_mouse_buttons.contains(&MouseButton::Left) {
             MouseHighlight::Left
@@ -483,11 +488,13 @@ fn minimize_debug_enabled() -> bool {
     *ENABLED.get_or_init(|| env::var("OVERLAY_MINIMIZE_DEBUG").is_ok_and(|v| v == "1"))
 }
 
+#[allow(dead_code)]
 fn ease_out_cubic(t: f32) -> f32 {
     let x = t.clamp(0.0, 1.0);
     1.0 - (1.0 - x).powi(3)
 }
 
+#[allow(dead_code)]
 fn ease_in_cubic(t: f32) -> f32 {
     let x = t.clamp(0.0, 1.0);
     x.powi(3)

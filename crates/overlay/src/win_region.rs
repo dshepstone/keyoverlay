@@ -384,6 +384,7 @@ pub fn apply_no_activate_styles(_hwnd: OverlayHwnd) {}
 pub fn show_window_no_activate(_hwnd: OverlayHwnd) {}
 
 #[cfg(not(target_os = "windows"))]
+#[allow(dead_code)]
 pub fn hide_window(_hwnd: OverlayHwnd) {}
 
 #[cfg(not(target_os = "windows"))]
@@ -392,6 +393,7 @@ pub fn restore_and_move_offscreen(_hwnd: OverlayHwnd) -> (i32, i32) {
 }
 
 #[cfg(not(target_os = "windows"))]
+#[allow(dead_code)]
 pub fn restore_to_position(_hwnd: OverlayHwnd, _x: i32, _y: i32) {}
 
 #[cfg(not(target_os = "windows"))]
@@ -400,11 +402,13 @@ pub fn is_foreground_window(_hwnd: OverlayHwnd) -> bool {
 }
 
 #[cfg(not(target_os = "windows"))]
+#[allow(dead_code)]
 pub fn apply_test_region(_title: &str) -> Option<OverlayHwnd> {
     None
 }
 
 #[cfg(not(target_os = "windows"))]
+#[allow(dead_code)]
 pub fn apply_tray_region(
     _title: &str,
     _width: i32,
@@ -415,6 +419,7 @@ pub fn apply_tray_region(
 }
 
 #[cfg(not(target_os = "windows"))]
+#[allow(dead_code)]
 pub fn apply_tray_region_with_redraw(
     _title: &str,
     _width: i32,

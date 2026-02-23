@@ -194,7 +194,14 @@ impl fmt::Display for Key {
             Key::Shift => "Shift",
             Key::Ctrl => "Ctrl",
             Key::Alt => "Alt",
-            Key::Win => "Super",
+            Key::Win => {
+                #[cfg(target_os = "windows")]
+                { "Win" }
+                #[cfg(target_os = "macos")]
+                { "Cmd" }
+                #[cfg(not(any(target_os = "windows", target_os = "macos")))]
+                { "Super" }
+            }
             Key::CapsLock => "CapsLk",
             Key::PrintScreen => "PrtSc",
             Key::ScrollLock => "ScrLk",
@@ -224,11 +231,18 @@ impl fmt::Display for Modifiers {
         }
 
         let mut first = true;
+        #[cfg(target_os = "windows")]
+        const WIN_LABEL: &str = "Win";
+        #[cfg(target_os = "macos")]
+        const WIN_LABEL: &str = "Cmd";
+        #[cfg(not(any(target_os = "windows", target_os = "macos")))]
+        const WIN_LABEL: &str = "Super";
+
         let parts = [
             (Modifiers::CTRL, "Ctrl"),
             (Modifiers::SHIFT, "Shift"),
             (Modifiers::ALT, "Alt"),
-            (Modifiers::WIN, "Super"),
+            (Modifiers::WIN, WIN_LABEL),
         ];
 
         for (flag, label) in parts {
@@ -603,8 +617,8 @@ pub fn spawn_input_listener_with_wakeup(
         let tx = Mutex::new(tx);
 
         let callback = move |event: Event| {
-            let mut state = state.lock().unwrap();
-            let tx = tx.lock().unwrap();
+            let Ok(mut state) = state.lock() else { return };
+            let Ok(tx) = tx.lock() else { return };
 
             match event.event_type {
                 EventType::KeyPress(rkey) => {

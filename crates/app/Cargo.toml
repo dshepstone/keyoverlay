@@ -9,12 +9,12 @@ build = "build.rs"
 [dependencies]
 anyhow = "1"
 eframe = "0.27"
-image = { version = "0.24.9", default-features = false, features = ["png"] }
+image = { version = "0.25", default-features = false, features = ["png"] }
 keyoverlay-core = { path = "../core" }
 keyoverlay-input = { path = "../input" }
 keyoverlay-overlay = { path = "../overlay" }
 
-[build-dependencies]
+[target.'cfg(windows)'.build-dependencies]
 image = "0.25"
 winres = "0.1"
 

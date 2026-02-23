@@ -61,6 +61,7 @@ impl CursorRingSettings {
 /// Signal a mouse click to the cursor ring controller (for click animation).
 #[derive(Clone, Copy, Debug)]
 pub struct ClickEvent {
+    #[allow(dead_code)]
     pub is_down: bool,
 }
 
@@ -244,7 +245,7 @@ mod imp {
                 base_radius + (max_expand_margin as f32 * click_expand).round() as i32;
             let cr = settings.click_accent_r.max(1);
             let cg = settings.click_accent_g.max(1);
-            let cb = settings.click_accent_b;
+            let cb = settings.click_accent_b.max(1);
             let anim_color = rgb_to_colorref(cr, cg, cb);
             let pen_thick = ((settings.thickness_px as f32) * (1.0 - click_expand * 0.6))
                 .round()
@@ -271,7 +272,7 @@ mod imp {
         // Ensure color is not pure black (color key = 0x000000)
         let r = settings.color_r.max(1);
         let g = settings.color_g.max(1);
-        let b = settings.color_b;
+        let b = settings.color_b.max(1);
         let ring_color = rgb_to_colorref(r, g, b);
 
         if settings.filled {

@@ -6,6 +6,7 @@
 //! Sound data is generated at compile-time as embedded WAV byte arrays, avoiding
 //! external asset files.
 
+#[cfg(target_os = "windows")]
 use std::sync::OnceLock;
 
 /// Identifies a sound pack (matches UI preset names).
@@ -29,6 +30,7 @@ impl SoundPack {
         }
     }
 
+    #[allow(dead_code)]
     pub fn label(self) -> &'static str {
         match self {
             SoundPack::None => "None",
@@ -59,7 +61,9 @@ impl SoundSettings {
 }
 
 // ── WAV generation ──────────────────────────────────────────────────────
+// These functions are used on Windows (via `mod imp`) and in tests.
 
+#[cfg(any(target_os = "windows", test))]
 /// Generate a minimal 16-bit mono PCM WAV in memory.
 fn generate_wav(sample_rate: u32, samples: &[i16]) -> Vec<u8> {
     let data_size = (samples.len() * 2) as u32;
@@ -91,6 +95,7 @@ fn generate_wav(sample_rate: u32, samples: &[i16]) -> Vec<u8> {
     buf
 }
 
+#[cfg(any(target_os = "windows", test))]
 /// Generate a short "typewriter" click sound (~15ms sharp attack, quick decay).
 fn gen_typewriter(volume: f32) -> Vec<u8> {
     let sample_rate = 44100u32;
@@ -115,6 +120,7 @@ fn gen_typewriter(volume: f32) -> Vec<u8> {
     generate_wav(sample_rate, &samples)
 }
 
+#[cfg(any(target_os = "windows", test))]
 /// Generate a "mechanical" keyboard click (~25ms, lower pitch, snappy).
 fn gen_mechanical(volume: f32) -> Vec<u8> {
     let sample_rate = 44100u32;
@@ -141,6 +147,7 @@ fn gen_mechanical(volume: f32) -> Vec<u8> {
     generate_wav(sample_rate, &samples)
 }
 
+#[cfg(any(target_os = "windows", test))]
 /// Generate a "soft click" sound (~20ms, muffled, gentle).
 fn gen_soft_click(volume: f32) -> Vec<u8> {
     let sample_rate = 44100u32;
@@ -163,6 +170,7 @@ fn gen_soft_click(volume: f32) -> Vec<u8> {
     generate_wav(sample_rate, &samples)
 }
 
+#[cfg(any(target_os = "windows", test))]
 /// Generate a "pop" sound (~12ms, round, bubbly).
 fn gen_pop(volume: f32) -> Vec<u8> {
     let sample_rate = 44100u32;
@@ -187,6 +195,7 @@ fn gen_pop(volume: f32) -> Vec<u8> {
     generate_wav(sample_rate, &samples)
 }
 
+#[cfg(any(target_os = "windows", test))]
 /// Pre-generate all sound pack WAVs at a given volume level.
 fn generate_pack_wav(pack: SoundPack, volume: f32) -> Vec<u8> {
     match pack {
@@ -198,6 +207,7 @@ fn generate_pack_wav(pack: SoundPack, volume: f32) -> Vec<u8> {
     }
 }
 
+#[cfg(target_os = "windows")]
 fn debug_enabled() -> bool {
     static ENABLED: OnceLock<bool> = OnceLock::new();
     *ENABLED.get_or_init(|| std::env::var("KEYOVERLAY_DEBUG").is_ok_and(|v| v == "1"))

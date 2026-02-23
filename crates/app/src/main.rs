@@ -2,7 +2,6 @@ use std::sync::{mpsc, Arc};
 
 use anyhow::Result;
 use eframe::egui::IconData;
-use image::io::Reader as ImageReader;
 use keyoverlay_core::shared_config;
 use keyoverlay_input::spawn_input_listener_with_wakeup;
 
@@ -23,11 +22,8 @@ fn main() -> Result<()> {
 }
 
 fn load_app_icon() -> Option<IconData> {
-    let image = ImageReader::open(concat!(env!("CARGO_MANIFEST_DIR"), "/icon.png"))
-        .ok()?
-        .decode()
-        .ok()?
-        .into_rgba8();
+    let bytes = include_bytes!("../icon.png");
+    let image = image::load_from_memory(bytes).ok()?.into_rgba8();
     let (width, height) = image.dimensions();
 
     Some(IconData {
