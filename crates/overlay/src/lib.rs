@@ -1879,3 +1879,231 @@ pub fn run(
     )
     .map_err(|e| anyhow::anyhow!("{e}"))
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::sync::{mpsc, Arc};
+
+    fn test_app(cfg: AppConfig) -> App {
+        let (_tx, rx) = mpsc::channel();
+        App::new(rx, Arc::new(Mutex::new(cfg)))
+    }
+
+    fn base_config() -> AppConfig {
+        AppConfig {
+            display_width_px: 1920.0,
+            display_height_px: 1080.0,
+            display_scale: 1.0,
+            margin_x: 40.0,
+            margin_y: 60.0,
+            ..AppConfig::default()
+        }
+    }
+
+    fn pos_for(position: OverlayPosition, cfg: AppConfig) -> egui::Pos2 {
+        let mut app = test_app(cfg);
+        app.draft.position = position;
+        app.compute_overlay_position([200.0, 100.0], [1920.0, 1080.0])
+    }
+
+    #[test]
+    fn overlay_anchoring_all_presets() {
+        let cfg = base_config();
+        assert_eq!(
+            pos_for(OverlayPosition::TopLeft, cfg.clone()),
+            egui::pos2(40.0, 60.0)
+        );
+        assert_eq!(
+            pos_for(OverlayPosition::TopRight, cfg.clone()),
+            egui::pos2(1680.0, 60.0)
+        );
+        assert_eq!(
+            pos_for(OverlayPosition::TopCenter, cfg.clone()),
+            egui::pos2(860.0, 60.0)
+        );
+        assert_eq!(
+            pos_for(OverlayPosition::BottomLeft, cfg.clone()),
+            egui::pos2(40.0, 920.0)
+        );
+        assert_eq!(
+            pos_for(OverlayPosition::BottomRight, cfg.clone()),
+            egui::pos2(1680.0, 920.0)
+        );
+        assert_eq!(
+            pos_for(OverlayPosition::BottomCenter, cfg.clone()),
+            egui::pos2(860.0, 920.0)
+        );
+        assert_eq!(
+            pos_for(OverlayPosition::Center, cfg),
+            egui::pos2(860.0, 490.0)
+        );
+    }
+
+    #[test]
+    fn overlay_anchoring_respects_display_scale() {
+        // At 125% scaling the logical desktop is 1536x864 points.
+        let cfg = AppConfig {
+            display_scale: 1.25,
+            ..base_config()
+        };
+        assert_eq!(
+            pos_for(OverlayPosition::TopRight, cfg.clone()),
+            egui::pos2(1536.0 - 200.0 - 40.0, 60.0)
+        );
+        assert_eq!(
+            pos_for(OverlayPosition::BottomRight, cfg),
+            egui::pos2(1296.0, 864.0 - 100.0 - 60.0)
+        );
+    }
+
+    #[test]
+    fn manual_position_allows_negative_coordinates() {
+        // Monitors left of or above the primary produce negative coordinates.
+        let cfg = AppConfig {
+            overlay_x: -500.0,
+            overlay_y: -250.0,
+            ..base_config()
+        };
+        assert_eq!(
+            pos_for(OverlayPosition::Manual, cfg),
+            egui::pos2(-500.0, -250.0)
+        );
+    }
+
+    #[test]
+    fn key_sort_rank_orders_modifiers_first() {
+        let mut keys = vec![Key::B, Key::Shift, Key::A, Key::Win, Key::Ctrl];
+        keys.sort_by_key(|k| key_sort_rank(*k));
+        assert_eq!(keys, vec![Key::Ctrl, Key::Shift, Key::Win, Key::A, Key::B]);
+    }
+
+    #[test]
+    fn input_state_tracks_pressed_keys_and_chord() {
+        use keyoverlay_input::{KeyEvent, Modifiers};
+
+        let mut state = InputState::new();
+        state.apply_event(InputEvent::Key(KeyEvent::new(
+            Key::Ctrl,
+            Modifiers::empty(),
+        )));
+        state.apply_event(InputEvent::Key(KeyEvent::new(Key::Shift, Modifiers::CTRL)));
+        state.apply_event(InputEvent::Key(KeyEvent::new(
+            Key::A,
+            Modifiers::CTRL | Modifiers::SHIFT,
+        )));
+
+        assert_eq!(state.pressed_keys.len(), 3);
+        assert_eq!(state.display_chord.as_deref(), Some("Ctrl + Shift + A"));
+
+        state.apply_event(InputEvent::Key(KeyEvent::new_released(
+            Key::A,
+            Modifiers::CTRL | Modifiers::SHIFT,
+        )));
+        assert_eq!(state.pressed_keys.len(), 2);
+        assert!(!state.pressed_keys.contains(&Key::A));
+
+        state.apply_event(InputEvent::Key(KeyEvent::new_released(
+            Key::Shift,
+            Modifiers::CTRL,
+        )));
+        state.apply_event(InputEvent::Key(KeyEvent::new_released(
+            Key::Ctrl,
+            Modifiers::empty(),
+        )));
+        assert!(state.pressed_keys.is_empty());
+    }
+
+    #[test]
+    fn input_state_mouse_label_has_no_duplicate_click() {
+        use keyoverlay_input::MouseClickEvent;
+
+        let mut state = InputState::new();
+        state.apply_event(InputEvent::MouseClick(MouseClickEvent::new(
+            MouseButton::Left,
+        )));
+        // Regression: this used to render as "Left Click Click".
+        assert_eq!(state.mouse_label.as_deref(), Some("Left Click"));
+        assert_eq!(state.last_mouse_highlight, MouseHighlight::Left);
+    }
+
+    #[test]
+    fn scroll_arrow_fades_after_display_duration() {
+        let mut state = InputState::new();
+        let display = Duration::from_millis(500);
+        let fade = Duration::from_millis(500);
+        let now = Instant::now();
+
+        // Fresh event: fully opaque.
+        state.scroll_highlight = Some(ScrollHighlight {
+            dir: ScrollArrowDirection::Up,
+            last_event: now,
+        });
+        let (dir, alpha) = state
+            .scroll_arrow_for_display(now, display, fade, true, true)
+            .expect("visible");
+        assert!(dir == ScrollArrowDirection::Up);
+        assert!((alpha - 1.0).abs() < f32::EPSILON);
+
+        // Halfway through the fade: alpha ~0.5.
+        state.scroll_highlight = Some(ScrollHighlight {
+            dir: ScrollArrowDirection::Down,
+            last_event: now - Duration::from_millis(750),
+        });
+        let (_, alpha) = state
+            .scroll_arrow_for_display(now, display, fade, true, true)
+            .expect("fading");
+        assert!((alpha - 0.5).abs() < 0.05, "alpha was {alpha}");
+
+        // Past display + fade: gone, and the highlight is cleared.
+        state.scroll_highlight = Some(ScrollHighlight {
+            dir: ScrollArrowDirection::Down,
+            last_event: now - Duration::from_millis(1100),
+        });
+        assert!(state
+            .scroll_arrow_for_display(now, display, fade, true, true)
+            .is_none());
+        assert!(state.scroll_highlight.is_none());
+
+        // Hidden when scroll display is disabled.
+        state.scroll_highlight = Some(ScrollHighlight {
+            dir: ScrollArrowDirection::Up,
+            last_event: now,
+        });
+        assert!(state
+            .scroll_arrow_for_display(now, display, fade, true, false)
+            .is_none());
+    }
+
+    #[test]
+    fn single_tile_auto_release_expires() {
+        let now = Instant::now();
+        let mut tile = SingleTileState::new(now);
+        tile.register_press(
+            "Wheel\u{2191}".to_string(),
+            now,
+            Some(Duration::from_millis(140)),
+        );
+        assert!(tile.is_down);
+
+        // Before the expiry the tile stays down.
+        tile.tick(now + Duration::from_millis(100), 0.016, 450);
+        assert!(tile.is_down);
+
+        // After the expiry it auto-releases.
+        tile.tick(now + Duration::from_millis(200), 0.016, 450);
+        assert!(!tile.is_down);
+    }
+
+    #[test]
+    fn single_tile_alpha_fades_when_idle() {
+        let now = Instant::now();
+        let mut tile = SingleTileState::new(now);
+        tile.register_press("A".to_string(), now, None);
+        assert!((tile.visible_alpha - 1.0).abs() < f32::EPSILON);
+
+        // Long after the idle window, a large-dt tick drives alpha toward 0.
+        tile.tick(now + Duration::from_millis(2000), 1.0, 450);
+        assert!(tile.visible_alpha < 0.1, "alpha was {}", tile.visible_alpha);
+    }
+}

@@ -703,3 +703,120 @@ pub use windows::vk_to_key;
 pub fn vk_to_key(_: u32) -> Option<Key> {
     None
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn key_display_labels() {
+        assert_eq!(Key::A.to_string(), "A");
+        assert_eq!(Key::Digit7.to_string(), "7");
+        assert_eq!(Key::F11.to_string(), "F11");
+        assert_eq!(Key::Escape.to_string(), "Esc");
+        assert_eq!(Key::Space.to_string(), "Space");
+        assert_eq!(Key::ArrowLeft.to_string(), "\u{2190}");
+        assert_eq!(Key::ArrowUp.to_string(), "\u{2191}");
+        assert_eq!(Key::Enter.to_string(), "\u{23CE}");
+        assert_eq!(Key::Backspace.to_string(), "\u{232B}");
+        assert_eq!(Key::PageDown.to_string(), "PgDn");
+        assert_eq!(Key::CapsLock.to_string(), "CapsLk");
+    }
+
+    #[test]
+    fn win_key_label_matches_platform() {
+        let label = Key::Win.to_string();
+        #[cfg(target_os = "windows")]
+        assert_eq!(label, "Win");
+        #[cfg(target_os = "macos")]
+        assert_eq!(label, "Cmd");
+        #[cfg(not(any(target_os = "windows", target_os = "macos")))]
+        assert_eq!(label, "Super");
+    }
+
+    #[test]
+    fn modifiers_display_order_and_separator() {
+        let all = Modifiers::CTRL | Modifiers::SHIFT | Modifiers::ALT;
+        assert_eq!(all.to_string(), "Ctrl + Shift + Alt");
+
+        let two = Modifiers::SHIFT | Modifiers::ALT;
+        assert_eq!(two.to_string(), "Shift + Alt");
+
+        assert_eq!(Modifiers::empty().to_string(), "");
+    }
+
+    #[test]
+    fn key_event_display_string_includes_modifiers() {
+        let plain = KeyEvent::new(Key::S, Modifiers::empty());
+        assert_eq!(plain.display_string(), "S");
+
+        let combo = KeyEvent::new(Key::S, Modifiers::CTRL | Modifiers::SHIFT);
+        assert_eq!(combo.display_string(), "Ctrl + Shift + S");
+    }
+
+    #[test]
+    fn modifier_state_tracks_press_and_release() {
+        let mut state = ModifierState::default();
+        assert_eq!(state.as_modifiers(), Modifiers::empty());
+
+        state.press(Key::Ctrl);
+        state.press(Key::Shift);
+        assert_eq!(state.as_modifiers(), Modifiers::CTRL | Modifiers::SHIFT);
+
+        // Pressing a non-modifier key must not change modifier state.
+        state.press(Key::A);
+        assert_eq!(state.as_modifiers(), Modifiers::CTRL | Modifiers::SHIFT);
+
+        state.release(Key::Ctrl);
+        assert_eq!(state.as_modifiers(), Modifiers::SHIFT);
+
+        state.release(Key::Shift);
+        assert_eq!(state.as_modifiers(), Modifiers::empty());
+    }
+
+    #[test]
+    fn modifier_helpers() {
+        assert!(is_modifier_key(Key::Shift));
+        assert!(is_modifier_key(Key::Win));
+        assert!(!is_modifier_key(Key::A));
+        assert_eq!(modifier_flag(Key::Ctrl), Some(Modifiers::CTRL));
+        assert_eq!(modifier_flag(Key::Enter), None);
+    }
+
+    #[test]
+    fn rdev_key_mapping_spot_checks() {
+        use rdev::Key as RK;
+        assert_eq!(rdev_key_to_key(RK::KeyA), Some(Key::A));
+        assert_eq!(rdev_key_to_key(RK::Num0), Some(Key::Digit0));
+        assert_eq!(rdev_key_to_key(RK::Return), Some(Key::Enter));
+        // Left and right variants collapse to the same modifier.
+        assert_eq!(rdev_key_to_key(RK::ShiftLeft), Some(Key::Shift));
+        assert_eq!(rdev_key_to_key(RK::ShiftRight), Some(Key::Shift));
+        assert_eq!(rdev_key_to_key(RK::MetaLeft), Some(Key::Win));
+        assert_eq!(rdev_key_to_key(RK::AltGr), Some(Key::Alt));
+        // Unknown keys must be dropped, not mislabeled.
+        assert_eq!(rdev_key_to_key(RK::Unknown(0xFFFF)), None);
+    }
+
+    #[test]
+    fn mouse_and_scroll_display() {
+        assert_eq!(MouseButton::Left.to_string(), "Left Click");
+        assert_eq!(MouseButton::Middle.to_string(), "Middle Click");
+        assert_eq!(MouseButton::Right.to_string(), "Right Click");
+        assert_eq!(ScrollDirection::Up.to_string(), "Scroll \u{2191}");
+        assert_eq!(ScrollDirection::Down.to_string(), "Scroll \u{2193}");
+    }
+
+    #[test]
+    fn key_event_press_release_state() {
+        let down = KeyEvent::new(Key::Q, Modifiers::empty());
+        assert!(down.is_down);
+        let up = KeyEvent::new_released(Key::Q, Modifiers::empty());
+        assert!(!up.is_down);
+
+        let click = MouseClickEvent::new(MouseButton::Left);
+        assert!(click.is_down);
+        let release = MouseClickEvent::new_released(MouseButton::Left);
+        assert!(!release.is_down);
+    }
+}

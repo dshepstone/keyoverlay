@@ -721,3 +721,90 @@ mod imp {
 }
 
 pub use imp::CursorRingController;
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use keyoverlay_core::AppConfig;
+
+    fn ring_config() -> AppConfig {
+        AppConfig {
+            enable_green_cursor_ring: true,
+            ..AppConfig::default()
+        }
+    }
+
+    #[test]
+    fn from_config_defaults_to_green_ring_theme() {
+        let settings = CursorRingSettings::from_config(&ring_config());
+        assert!(settings.enabled);
+        assert!(!settings.filled);
+        assert_eq!(
+            (settings.color_r, settings.color_g, settings.color_b),
+            (100, 220, 100)
+        );
+    }
+
+    #[test]
+    fn from_config_maps_theme_shape_and_accent() {
+        let cfg = AppConfig {
+            cursor_theme: Some(CursorTheme::RedDot),
+            ..ring_config()
+        };
+        let settings = CursorRingSettings::from_config(&cfg);
+        assert!(settings.filled);
+        assert_eq!(
+            (settings.color_r, settings.color_g, settings.color_b),
+            (240, 60, 60)
+        );
+        assert_eq!(
+            (
+                settings.click_accent_r,
+                settings.click_accent_g,
+                settings.click_accent_b
+            ),
+            (255, 140, 140)
+        );
+    }
+
+    #[test]
+    fn from_config_glow_falls_back_to_theme_default() {
+        // User has not adjusted glow (0.0): the theme default applies.
+        let cfg = AppConfig {
+            cursor_theme: Some(CursorTheme::BlueGlow),
+            cursor_glow: 0.0,
+            ..ring_config()
+        };
+        let settings = CursorRingSettings::from_config(&cfg);
+        assert!((settings.glow - 0.4).abs() < f32::EPSILON);
+
+        // User-set glow wins over the theme default.
+        let cfg = AppConfig {
+            cursor_theme: Some(CursorTheme::BlueGlow),
+            cursor_glow: 0.8,
+            ..ring_config()
+        };
+        let settings = CursorRingSettings::from_config(&cfg);
+        assert!((settings.glow - 0.8).abs() < f32::EPSILON);
+    }
+
+    #[test]
+    fn from_config_clamps_geometry_and_opacity() {
+        let cfg = AppConfig {
+            cursor_ring_size_px: 500.0,
+            cursor_ring_thickness_px: 0.5,
+            cursor_ring_opacity: 0.01,
+            ..ring_config()
+        };
+        let settings = CursorRingSettings::from_config(&cfg);
+        assert_eq!(settings.diameter_px, 200);
+        assert_eq!(settings.thickness_px, 2);
+        assert!((settings.opacity - 0.2).abs() < f32::EPSILON);
+    }
+
+    #[test]
+    fn from_config_disabled_when_ring_off() {
+        let cfg = AppConfig::default();
+        assert!(!CursorRingSettings::from_config(&cfg).enabled);
+    }
+}
