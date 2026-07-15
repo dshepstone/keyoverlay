@@ -191,18 +191,6 @@ mod imp {
         ));
     }
 
-    pub fn apply_tray_region_with_redraw(
-        title: &str,
-        width: i32,
-        height: i32,
-        tray_radius_px: i32,
-        redraw: bool,
-    ) -> Option<HWND> {
-        let hwnd = find_hwnd_by_title(title)?;
-        let _ = apply_tray_region_hwnd_with_redraw(hwnd, width, height, tray_radius_px, redraw);
-        Some(hwnd)
-    }
-
     pub fn force_redraw(hwnd: HWND) {
         overlay_startup_diagnostics::log_event(format!("force redraw hwnd={hwnd:?}"));
         let _ = unsafe { InvalidateRect(hwnd, None, true) };
@@ -216,6 +204,9 @@ mod imp {
         };
     }
 
+    /// Manual debugging helper: applies a fixed rounded region so region
+    /// behaviour can be inspected independently of the layout code.
+    #[allow(dead_code)]
     pub fn apply_test_region(title: &str) -> Option<HWND> {
         let hwnd = find_hwnd_by_title(title)?;
         eprintln!("[overlay-region] Applying TEST region hwnd={hwnd:?}");
@@ -286,6 +277,9 @@ mod imp {
         };
     }
 
+    /// Counterpart of `show_window_no_activate`; kept for the off-screen
+    /// minimize workaround even though the current flow only moves the window.
+    #[allow(dead_code)]
     pub fn hide_window(hwnd: HWND) {
         if !unsafe { IsWindow(hwnd).as_bool() } {
             return;
@@ -329,6 +323,9 @@ mod imp {
     }
 
     /// Move a window back to a specific screen position and make it visible.
+    /// Counterpart of `restore_and_move_offscreen` (the restore path currently
+    /// goes through egui's `ViewportCommand::OuterPosition` instead).
+    #[allow(dead_code)]
     pub fn restore_to_position(hwnd: HWND, x: i32, y: i32) {
         if !unsafe { IsWindow(hwnd).as_bool() } {
             return;
@@ -354,15 +351,6 @@ mod imp {
         unsafe { GetForegroundWindow() == hwnd }
     }
 
-    pub fn apply_tray_region(
-        title: &str,
-        width: i32,
-        height: i32,
-        tray_radius_px: i32,
-    ) -> Option<HWND> {
-        apply_tray_region_with_redraw(title, width, height, tray_radius_px, true)
-    }
-
     pub fn hwnd_is_valid(hwnd: HWND) -> bool {
         unsafe { IsWindow(hwnd).as_bool() }
     }
@@ -371,10 +359,10 @@ mod imp {
 #[cfg(target_os = "windows")]
 #[allow(unused_imports)]
 pub use imp::{
-    apply_no_activate_styles, apply_test_region, apply_tray_region,
-    apply_tray_region_hwnd_with_redraw, apply_tray_region_with_redraw, disable_dwm_transitions,
-    find_hwnd_by_title, force_redraw, hide_window, hwnd_is_valid, is_foreground_window,
-    restore_and_move_offscreen, restore_to_position, show_window_no_activate, snapshot_hwnd_state,
+    apply_no_activate_styles, apply_test_region, apply_tray_region_hwnd_with_redraw,
+    disable_dwm_transitions, find_hwnd_by_title, force_redraw, hide_window, hwnd_is_valid,
+    is_foreground_window, restore_and_move_offscreen, restore_to_position, show_window_no_activate,
+    snapshot_hwnd_state,
 };
 
 #[cfg(not(target_os = "windows"))]
@@ -404,29 +392,6 @@ pub fn is_foreground_window(_hwnd: OverlayHwnd) -> bool {
 #[cfg(not(target_os = "windows"))]
 #[allow(dead_code)]
 pub fn apply_test_region(_title: &str) -> Option<OverlayHwnd> {
-    None
-}
-
-#[cfg(not(target_os = "windows"))]
-#[allow(dead_code)]
-pub fn apply_tray_region(
-    _title: &str,
-    _width: i32,
-    _height: i32,
-    _tray_radius_px: i32,
-) -> Option<OverlayHwnd> {
-    None
-}
-
-#[cfg(not(target_os = "windows"))]
-#[allow(dead_code)]
-pub fn apply_tray_region_with_redraw(
-    _title: &str,
-    _width: i32,
-    _height: i32,
-    _tray_radius_px: i32,
-    _redraw: bool,
-) -> Option<OverlayHwnd> {
     None
 }
 

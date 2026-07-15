@@ -268,7 +268,8 @@ impl InputState {
                 self.pressed_mouse_buttons.clear();
                 self.last_mouse_activity = now;
                 self.last_mouse_was_scroll = false;
-                self.mouse_label = Some(format!("{} Click", e.button));
+                // MouseButton's Display already includes "Click" ("Left Click").
+                self.mouse_label = Some(e.button.to_string());
                 self.pending_left_press_at = None;
                 self.pending_left_press_moved = false;
                 if e.is_down {
@@ -540,7 +541,6 @@ struct App {
     first_show_done: bool,
     pending_region: Option<(i32, i32, i32)>,
     region_settle_deadline: Option<Instant>,
-    region_redraw_needed: bool,
     region_debounce: Duration,
     last_sent_outer_pos: Option<egui::Pos2>,
     last_sent_inner_size: Option<egui::Vec2>,
@@ -565,8 +565,10 @@ struct App {
 }
 
 impl App {
-    fn new(rx: Receiver<InputEvent>, config: SharedConfig) -> Self {
-        let mut draft = config.lock().unwrap().clone();
+    /// Clamp draft values to the ranges the overlay UI supports.
+    /// The 26 px font minimum matches the large-tile overlay design and the
+    /// font-size slider range in the settings window.
+    fn clamp_draft(draft: &mut AppConfig) {
         if draft.font_size < 26.0 {
             draft.font_size = 26.0;
         }
@@ -574,6 +576,11 @@ impl App {
         draft.cursor_ring_size_px = draft.cursor_ring_size_px.clamp(24.0, 120.0);
         draft.cursor_ring_thickness_px = draft.cursor_ring_thickness_px.clamp(2.0, 12.0);
         draft.cursor_ring_opacity = draft.cursor_ring_opacity.clamp(0.2, 1.0);
+    }
+
+    fn new(rx: Receiver<InputEvent>, config: SharedConfig) -> Self {
+        let mut draft = config.lock().unwrap().clone();
+        Self::clamp_draft(&mut draft);
         if draft.position == OverlayPosition::Manual
             && (draft.overlay_x - 500.0).abs() < f32::EPSILON
             && (draft.overlay_y - 500.0).abs() < f32::EPSILON
@@ -612,7 +619,6 @@ impl App {
             first_show_done: false,
             pending_region: None,
             region_settle_deadline: None,
-            region_redraw_needed: false,
             region_debounce: Duration::from_millis(16),
             last_sent_outer_pos: None,
             last_sent_inner_size: None,
@@ -631,13 +637,7 @@ impl App {
     }
 
     fn apply(&mut self) {
-        if self.draft.font_size < 26.0 {
-            self.draft.font_size = 26.0;
-        }
-        self.draft.overlay_scale = self.draft.overlay_scale.clamp(0.6, 2.0);
-        self.draft.cursor_ring_size_px = self.draft.cursor_ring_size_px.clamp(24.0, 120.0);
-        self.draft.cursor_ring_thickness_px = self.draft.cursor_ring_thickness_px.clamp(2.0, 12.0);
-        self.draft.cursor_ring_opacity = self.draft.cursor_ring_opacity.clamp(0.2, 1.0);
+        Self::clamp_draft(&mut self.draft);
         *self.config.lock().unwrap() = self.draft.clone();
         self.draft.save();
         self.status_msg = Some(("Settings saved.".into(), Instant::now()));
@@ -645,8 +645,6 @@ impl App {
 
     fn reset_defaults(&mut self) {
         self.draft = AppConfig::default();
-        self.draft.font_size = 26.0;
-        self.draft.overlay_scale = self.draft.overlay_scale.clamp(0.6, 2.0);
         self.apply();
     }
 
@@ -1123,13 +1121,11 @@ impl App {
                 apply_tray_region_hwnd_with_redraw(hwnd_val, width, height, radius, false);
 
             if region_ok {
-                self.region_redraw_needed = true;
                 self.region_settle_deadline = None;
                 self.pending_region = None;
 
-                if redraw || self.region_redraw_needed {
+                if redraw {
                     force_redraw(hwnd_val);
-                    self.region_redraw_needed = false;
                 }
 
                 self.last_hwnd = Some(hwnd_val);
@@ -1165,7 +1161,6 @@ impl App {
                 self.startup_region_prepared = false;
                 self.pending_region = None;
                 self.region_settle_deadline = None;
-                self.region_redraw_needed = false;
                 self.first_show_done = false;
             }
         }

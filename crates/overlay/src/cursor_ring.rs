@@ -423,6 +423,9 @@ mod imp {
 
                 // Click animation state
                 let mut click_anim_start: Option<Instant> = None;
+                // True while the previous frame still showed the click ring;
+                // used to schedule one final redraw that erases it.
+                let mut click_ring_drawn = false;
                 const CLICK_ANIM_DURATION_MS: f32 = 160.0;
 
                 // Throttle debug logging
@@ -488,7 +491,13 @@ mod imp {
 
                     if let Some(window) = hwnd {
                         let settings_changed = settings != last_settings;
-                        let needs_redraw = settings_changed || click_expand > 0.01;
+                        let click_ring_visible = click_expand > 0.01;
+                        // The extra redraw when the ring just disappeared erases
+                        // the last animation frame; without it a ghost ring stays
+                        // on screen until the next click or settings change.
+                        let needs_redraw =
+                            settings_changed || click_ring_visible || click_ring_drawn;
+                        click_ring_drawn = click_ring_visible;
 
                         if needs_redraw {
                             let dpi_scale = scale_for_dpi(window);

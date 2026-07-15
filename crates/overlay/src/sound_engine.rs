@@ -239,8 +239,15 @@ mod imp {
         settings: SoundSettings,
         /// Cached WAV data for current pack + volume (shared with audio thread).
         cached_wav: Arc<Vec<u8>>,
-        cached_pack: SoundPack,
-        cached_volume_quantized: u8,
+        /// Cache key: (enabled, pack, quantized volume). `enabled` must be part
+        /// of the key — the cache is intentionally left empty while sounds are
+        /// disabled, so re-enabling with an unchanged pack/volume still has to
+        /// regenerate the WAV.
+        cached_key: (bool, SoundPack, u8),
+    }
+
+    fn quantize_volume(volume: f32) -> u8 {
+        (volume.clamp(0.0, 1.0) * 20.0).round() as u8
     }
 
     pub struct SoundEngine {
@@ -306,8 +313,11 @@ mod imp {
                 state: Mutex::new(EngineState {
                     settings: initial,
                     cached_wav: Arc::new(wav),
-                    cached_pack: initial.pack,
-                    cached_volume_quantized: (initial.volume * 20.0).round() as u8,
+                    cached_key: (
+                        initial.enabled,
+                        initial.pack,
+                        quantize_volume(initial.volume),
+                    ),
                 }),
                 audio_tx: tx,
             }
@@ -315,16 +325,19 @@ mod imp {
 
         pub fn update_settings(&self, settings: SoundSettings) {
             let mut state = self.state.lock().unwrap();
-            let vol_q = (settings.volume * 20.0).round() as u8;
-            if state.cached_pack != settings.pack || state.cached_volume_quantized != vol_q {
+            let key = (
+                settings.enabled,
+                settings.pack,
+                quantize_volume(settings.volume),
+            );
+            if state.cached_key != key {
                 let wav = if settings.enabled && settings.pack != SoundPack::None {
                     generate_pack_wav(settings.pack, settings.volume)
                 } else {
                     Vec::new()
                 };
                 state.cached_wav = Arc::new(wav);
-                state.cached_pack = settings.pack;
-                state.cached_volume_quantized = vol_q;
+                state.cached_key = key;
                 if debug_enabled() {
                     eprintln!(
                         "[sound-engine] regenerated wav pack={:?} vol={:.2}",

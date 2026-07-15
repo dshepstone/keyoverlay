@@ -571,11 +571,14 @@ fn tab_general(app: &mut App, ui: &mut egui::Ui) {
             });
         });
         ui.add_space(4.0);
+        // Keep in sync with App::clamp_draft, which enforces a 26 px minimum
+        // for the large-tile overlay design; a wider range here would let the
+        // user pick values that silently snap back on apply.
         slider_row(
             ui,
             "Font size",
             &mut app.draft.font_size,
-            10.0..=32.0,
+            26.0..=32.0,
             " px",
         );
         ui.add_space(2.0);
