@@ -562,6 +562,12 @@ struct App {
     main_window_saved_pos: Option<egui::Pos2>,
     /// Previous token count for detecting token changes (combo delay fix).
     prev_token_count: usize,
+    /// True while a settings change has not been written to disk yet.
+    /// Writes are debounced so slider drags don't hit the filesystem on
+    /// every frame; the flush happens in `update` and on drop.
+    pending_save: bool,
+    /// Time of the most recent settings change (debounce reference point).
+    last_apply_at: Instant,
 }
 
 impl App {
@@ -633,14 +639,32 @@ impl App {
             main_window_hwnd: None,
             main_window_saved_pos: None,
             prev_token_count: 0,
+            pending_save: false,
+            last_apply_at: Instant::now(),
         }
     }
 
     fn apply(&mut self) {
         Self::clamp_draft(&mut self.draft);
         *self.config.lock().unwrap() = self.draft.clone();
-        self.draft.save();
+        // The disk write is debounced (see `flush_pending_save`); the new
+        // values take effect immediately via the shared config above.
+        self.pending_save = true;
+        self.last_apply_at = Instant::now();
         self.status_msg = Some(("Settings saved.".into(), Instant::now()));
+    }
+
+    /// Write the config to disk once changes have settled. Called every
+    /// frame; the 500 ms quiet period coalesces per-frame slider updates
+    /// into a single write.
+    fn flush_pending_save(&mut self, force: bool) {
+        if !self.pending_save {
+            return;
+        }
+        if force || self.last_apply_at.elapsed() >= Duration::from_millis(500) {
+            self.draft.save();
+            self.pending_save = false;
+        }
     }
 
     fn reset_defaults(&mut self) {
@@ -1763,6 +1787,8 @@ impl eframe::App for App {
             }
         }
 
+        self.flush_pending_save(false);
+
         let now = Instant::now();
         let keys_held = !self.input_state.pressed_keys.is_empty();
         let mouse_held = self.tray_state.active_mouse.values().any(|m| m.is_down);
@@ -1790,6 +1816,7 @@ impl eframe::App for App {
 
 impl Drop for App {
     fn drop(&mut self) {
+        self.flush_pending_save(true);
         self.cursor_ring.shutdown();
     }
 }
