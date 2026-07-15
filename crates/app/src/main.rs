@@ -1,3 +1,10 @@
+// Hide the console window in Windows release builds; debug builds keep the
+// console so diagnostics (OVERLAY_DEBUG etc.) stay visible during development.
+#![cfg_attr(
+    all(target_os = "windows", not(debug_assertions)),
+    windows_subsystem = "windows"
+)]
+
 use std::sync::{mpsc, Arc};
 
 use anyhow::Result;

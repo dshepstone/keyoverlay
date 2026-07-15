@@ -1224,7 +1224,7 @@ fn tab_about(ui: &mut egui::Ui) {
         );
         ui.add_space(8.0);
         ui.label(
-            egui::RichText::new("Version 0.2.0")
+            egui::RichText::new(concat!("Version ", env!("CARGO_PKG_VERSION")))
                 .color(MUTED_TEXT)
                 .size(13.0),
         );
