@@ -534,24 +534,12 @@ fn modifier_flag(key: Key) -> Option<Modifiers> {
 }
 
 /// Track currently held modifier state.
+#[derive(Default)]
 struct ModifierState {
     shift: bool,
     ctrl: bool,
     alt: bool,
     win: bool,
-    used_as_modifier: Modifiers,
-}
-
-impl Default for ModifierState {
-    fn default() -> Self {
-        Self {
-            shift: false,
-            ctrl: false,
-            alt: false,
-            win: false,
-            used_as_modifier: Modifiers::empty(),
-        }
-    }
 }
 
 impl ModifierState {
@@ -570,16 +558,6 @@ impl ModifierState {
             m |= Modifiers::WIN;
         }
         m
-    }
-
-    fn mark_active_modifiers_used(&mut self) {
-        self.used_as_modifier |= self.as_modifiers();
-    }
-
-    fn clear_modifier_used(&mut self, key: Key) {
-        if let Some(flag) = modifier_flag(key) {
-            self.used_as_modifier.remove(flag);
-        }
     }
 
     fn press(&mut self, key: Key) {
@@ -617,47 +595,44 @@ pub fn spawn_input_listener_with_wakeup(
 ) {
     thread::spawn(move || {
         use rdev::{listen, Event, EventType};
-        use std::sync::Mutex;
 
-        let state = Mutex::new(ModifierState::default());
-        let tx = Mutex::new(tx);
+        // `listen` takes an `FnMut` callback that only ever runs on this
+        // thread, so plain mutable captures are enough — no locking in the
+        // hook path.
+        let mut state = ModifierState::default();
+
+        // Forward an event to the UI and wake the repaint loop. Kept minimal:
+        // this runs inside the OS input hook, so it must never block.
+        let forward = move |event: InputEvent| {
+            if tx.send(event).is_ok() {
+                if let Some(wake) = &wake_repaint {
+                    if repaint_debug_enabled() {
+                        eprintln!(
+                            "[overlay-repaint] enqueue input event t={:?} -> request_repaint",
+                            Instant::now()
+                        );
+                    }
+                    wake();
+                }
+            }
+        };
 
         let callback = move |event: Event| {
-            let Ok(mut state) = state.lock() else { return };
-            let Ok(tx) = tx.lock() else { return };
-
             match event.event_type {
                 EventType::KeyPress(rkey) => {
                     if let Some(key) = rdev_key_to_key(rkey) {
                         if is_modifier_key(key) {
                             state.press(key);
-                            let modifiers = state.as_modifiers();
-                            let mut clean_mods = modifiers;
+                            // Report the other held modifiers, not the one
+                            // this event is about.
+                            let mut clean_mods = state.as_modifiers();
                             if let Some(flag) = modifier_flag(key) {
                                 clean_mods.remove(flag);
                             }
-
-                            let ke = KeyEvent::new(key, clean_mods);
-                            if tx.send(InputEvent::Key(ke)).is_ok() {
-                                if let Some(wake) = &wake_repaint {
-                                    if repaint_debug_enabled() {
-                                        eprintln!("[overlay-repaint] enqueue key event t={:?} -> request_repaint", Instant::now());
-                                    }
-                                    wake();
-                                }
-                            }
+                            forward(InputEvent::Key(KeyEvent::new(key, clean_mods)));
                         } else {
                             let modifiers = state.as_modifiers();
-                            state.mark_active_modifiers_used();
-                            let ke = KeyEvent::new(key, modifiers);
-                            if tx.send(InputEvent::Key(ke)).is_ok() {
-                                if let Some(wake) = &wake_repaint {
-                                    if repaint_debug_enabled() {
-                                        eprintln!("[overlay-repaint] enqueue key event t={:?} -> request_repaint", Instant::now());
-                                    }
-                                    wake();
-                                }
-                            }
+                            forward(InputEvent::Key(KeyEvent::new(key, modifiers)));
                         }
                     }
                 }
@@ -667,21 +642,10 @@ pub fn spawn_input_listener_with_wakeup(
                         if let Some(flag) = modifier_flag(key) {
                             modifiers.remove(flag);
                         }
-                        if tx
-                            .send(InputEvent::Key(KeyEvent::new_released(key, modifiers)))
-                            .is_ok()
-                        {
-                            if let Some(wake) = &wake_repaint {
-                                if repaint_debug_enabled() {
-                                    eprintln!("[overlay-repaint] enqueue input event t={:?} -> request_repaint", Instant::now());
-                                }
-                                wake();
-                            }
-                        }
+                        forward(InputEvent::Key(KeyEvent::new_released(key, modifiers)));
 
                         if is_modifier_key(key) {
                             state.release(key);
-                            state.clear_modifier_used(key);
                         }
                     }
                 }
@@ -693,17 +657,7 @@ pub fn spawn_input_listener_with_wakeup(
                         _ => None,
                     };
                     if let Some(b) = button {
-                        if tx
-                            .send(InputEvent::MouseClick(MouseClickEvent::new(b)))
-                            .is_ok()
-                        {
-                            if let Some(wake) = &wake_repaint {
-                                if repaint_debug_enabled() {
-                                    eprintln!("[overlay-repaint] enqueue input event t={:?} -> request_repaint", Instant::now());
-                                }
-                                wake();
-                            }
-                        }
+                        forward(InputEvent::MouseClick(MouseClickEvent::new(b)));
                     }
                 }
                 EventType::ButtonRelease(btn) => {
@@ -714,17 +668,7 @@ pub fn spawn_input_listener_with_wakeup(
                         _ => None,
                     };
                     if let Some(b) = button {
-                        if tx
-                            .send(InputEvent::MouseClick(MouseClickEvent::new_released(b)))
-                            .is_ok()
-                        {
-                            if let Some(wake) = &wake_repaint {
-                                if repaint_debug_enabled() {
-                                    eprintln!("[overlay-repaint] enqueue input event t={:?} -> request_repaint", Instant::now());
-                                }
-                                wake();
-                            }
-                        }
+                        forward(InputEvent::MouseClick(MouseClickEvent::new_released(b)));
                     }
                 }
                 EventType::Wheel { delta_y, .. } => {
@@ -735,20 +679,7 @@ pub fn spawn_input_listener_with_wakeup(
                     } else {
                         return;
                     };
-                    if tx
-                        .send(InputEvent::Scroll(ScrollEvent::new(direction)))
-                        .is_ok()
-                    {
-                        if let Some(wake) = &wake_repaint {
-                            if repaint_debug_enabled() {
-                                eprintln!(
-                                    "[overlay-repaint] enqueue scroll event t={:?} -> request_repaint",
-                                    Instant::now()
-                                );
-                            }
-                            wake();
-                        }
-                    }
+                    forward(InputEvent::Scroll(ScrollEvent::new(direction)));
                 }
                 _ => {}
             }

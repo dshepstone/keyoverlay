@@ -106,10 +106,12 @@ mod imp {
         let tray_h = height.max(1);
         let rr = tray_radius_px.max(0);
 
-        overlay_startup_diagnostics::log_event(format!(
-            "SetWindowRgn request hwnd={hwnd:?} size={}x{} radius={} redraw={redraw}",
-            tray_w, tray_h, rr
-        ));
+        if overlay_startup_diagnostics::enabled() {
+            overlay_startup_diagnostics::log_event(format!(
+                "SetWindowRgn request hwnd={hwnd:?} size={}x{} radius={} redraw={redraw}",
+                tray_w, tray_h, rr
+            ));
+        }
         snapshot_hwnd_state(hwnd, "before-setwindowrgn");
 
         let tray_rgn = unsafe { CreateRoundRectRgn(0, 0, tray_w, tray_h, rr * 2, rr * 2) };
@@ -148,6 +150,11 @@ mod imp {
     }
 
     pub fn snapshot_hwnd_state(hwnd: HWND, label: &str) {
+        // Skip the Win32 queries and string formatting entirely when
+        // diagnostics are off — this runs on every region change.
+        if !overlay_startup_diagnostics::enabled() {
+            return;
+        }
         let mut wr = RECT::default();
         let mut cr = RECT::default();
         let mut efb = RECT::default();
@@ -192,7 +199,9 @@ mod imp {
     }
 
     pub fn force_redraw(hwnd: HWND) {
-        overlay_startup_diagnostics::log_event(format!("force redraw hwnd={hwnd:?}"));
+        if overlay_startup_diagnostics::enabled() {
+            overlay_startup_diagnostics::log_event(format!("force redraw hwnd={hwnd:?}"));
+        }
         let _ = unsafe { InvalidateRect(hwnd, None, true) };
         let _ = unsafe {
             RedrawWindow(

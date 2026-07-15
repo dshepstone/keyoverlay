@@ -57,12 +57,17 @@ pub fn request_external_repaint() {
     }
 }
 
-fn overlay_viewport_title() -> String {
-    if overlay_startup_diagnostics::enabled() {
-        format!("{OVERLAY_VIEWPORT_TITLE} (pid={})", std::process::id())
-    } else {
-        OVERLAY_VIEWPORT_TITLE.to_string()
-    }
+fn overlay_viewport_title() -> &'static str {
+    static TITLE: OnceLock<String> = OnceLock::new();
+    TITLE
+        .get_or_init(|| {
+            if overlay_startup_diagnostics::enabled() {
+                format!("{OVERLAY_VIEWPORT_TITLE} (pid={})", std::process::id())
+            } else {
+                OVERLAY_VIEWPORT_TITLE.to_string()
+            }
+        })
+        .as_str()
 }
 
 #[derive(Clone, Copy)]
@@ -178,8 +183,6 @@ impl OverlayTrayState {
         }
     }
 }
-
-fn ensure_windows_overlay_transparency() {}
 
 #[derive(Clone)]
 struct InputState {
@@ -297,13 +300,12 @@ impl InputState {
         }
     }
 
-    fn tick(&mut self, now: Instant, mouse_hold_for: Duration, keyboard_hold_for: Duration) {
+    fn tick(&mut self, now: Instant, mouse_hold_for: Duration) {
         if !self.mouse_icon_visible(now, mouse_hold_for) {
             self.last_mouse_highlight = MouseHighlight::None;
             self.scroll_highlight = None;
         }
 
-        let _ = keyboard_hold_for;
         self.pressed_mouse_buttons.clear();
     }
 
@@ -568,6 +570,10 @@ struct App {
     pending_save: bool,
     /// Time of the most recent settings change (debounce reference point).
     last_apply_at: Instant,
+    /// Snapshot of the draft last pushed to the shared config, cursor ring,
+    /// and sound engine; lets `update` skip the clone + lock + sync work on
+    /// the (vast majority of) frames where nothing changed.
+    last_synced_draft: Option<AppConfig>,
 }
 
 impl App {
@@ -641,6 +647,7 @@ impl App {
             prev_token_count: 0,
             pending_save: false,
             last_apply_at: Instant::now(),
+            last_synced_draft: None,
         }
     }
 
@@ -1173,7 +1180,7 @@ impl App {
     }
 
     fn maybe_log_hwnd_state(&mut self) {
-        let observed = find_hwnd_by_title(&overlay_viewport_title());
+        let observed = find_hwnd_by_title(overlay_viewport_title());
         if let (Some(old), Some(new)) = (self.last_hwnd, observed) {
             if old != new {
                 overlay_startup_diagnostics::log_event(format!(
@@ -1309,20 +1316,29 @@ impl eframe::App for App {
             ctx.request_repaint();
         }
 
-        *self.config.lock().unwrap() = self.draft.clone();
-        self.cursor_ring
-            .sync(CursorRingSettings::from_config(&self.draft));
-        self.sound_engine
-            .update_settings(SoundSettings::from_config(&self.draft));
+        // Publish draft changes to the shared config and the background
+        // subsystems only when something actually changed; doing this every
+        // frame cloned the config (including a String) and took three locks
+        // per frame for no benefit.
+        if self.last_synced_draft.as_ref() != Some(&self.draft) {
+            *self.config.lock().unwrap() = self.draft.clone();
+            self.cursor_ring
+                .sync(CursorRingSettings::from_config(&self.draft));
+            self.sound_engine
+                .update_settings(SoundSettings::from_config(&self.draft));
+            self.last_synced_draft = Some(self.draft.clone());
+        }
 
         let screen_rect = ctx.input(|i| i.screen_rect());
-        overlay_startup_diagnostics::log_event(format!(
-            "frame input screen_rect={}x{} px_per_point={:.3}",
-            screen_rect.width(),
-            screen_rect.height(),
-            ctx.pixels_per_point()
-        ));
+        // Per-frame diagnostics are gated on enabled() at the call site so the
+        // format! argument isn't built (allocated) on every frame in normal runs.
         if overlay_startup_diagnostics::enabled() {
+            overlay_startup_diagnostics::log_event(format!(
+                "frame input screen_rect={}x{} px_per_point={:.3}",
+                screen_rect.width(),
+                screen_rect.height(),
+                ctx.pixels_per_point()
+            ));
             ctx.input(|i| {
                 for ev in &i.events {
                     overlay_startup_diagnostics::log_event(format!("egui event: {ev:?}"));
@@ -1412,7 +1428,7 @@ impl eframe::App for App {
             let display_duration =
                 Duration::from_secs_f32(self.draft.display_duration_secs.max(0.0));
             let fade_duration = Duration::from_secs_f32(self.draft.fade_duration_secs.max(0.0));
-            self.input_state.tick(now, mouse_hold_for, overlay_hold_for);
+            self.input_state.tick(now, mouse_hold_for);
 
             let render_tokens = self.build_render_tokens(now, dt);
             let mut overlay_visible =
@@ -1431,7 +1447,11 @@ impl eframe::App for App {
                 self.draft.show_scroll,
             );
 
-            let cfg = self.draft.clone();
+            // Only the palette (Copy) and the overlay scale are needed inside
+            // the viewport closure — capture those instead of cloning the
+            // whole config (with its String field) every frame.
+            let palette = theme::Palette::from_config(&self.draft);
+            let overlay_scale = self.draft.overlay_scale.clamp(0.6, 2.0);
             let geometry = self.build_overlay_geometry(ctx, &render_tokens, dt);
 
             let computed_win_pos = self.compute_overlay_position(
@@ -1482,7 +1502,7 @@ impl eframe::App for App {
                 == overlay_startup_diagnostics::OverlayExperiment::EarlyDwmDisable
                 && !self.transitions_disabled
             {
-                if let Some(hwnd) = find_hwnd_by_title(&overlay_title) {
+                if let Some(hwnd) = find_hwnd_by_title(overlay_title) {
                     overlay_startup_diagnostics::log_event(
                         "experiment A: disable DWM transitions as soon as HWND exists",
                     );
@@ -1560,17 +1580,19 @@ impl eframe::App for App {
                         );
                     }
                 }
-                overlay_startup_diagnostics::log_event(format!(
-                    "startup geometry size_pt={:.1}x{:.1} size_px={}x{} pos=({:.1},{:.1})",
-                    geometry.width_points,
-                    geometry.height_points,
-                    geometry.width_px,
-                    geometry.height_px,
-                    win_pos.x,
-                    win_pos.y
-                ));
+                if overlay_startup_diagnostics::enabled() {
+                    overlay_startup_diagnostics::log_event(format!(
+                        "startup geometry size_pt={:.1}x{:.1} size_px={}x{} pos=({:.1},{:.1})",
+                        geometry.width_points,
+                        geometry.height_points,
+                        geometry.width_px,
+                        geometry.height_px,
+                        win_pos.x,
+                        win_pos.y
+                    ));
+                }
                 // Resize/reposition first, then apply region in window-local coordinates.
-                self.maybe_apply_window_region(&overlay_title, &geometry, overlay_visible);
+                self.maybe_apply_window_region(overlay_title, &geometry, overlay_visible);
 
                 if startup_hidden_mode && self.startup_region_prepared && !self.first_show_done {
                     if let Some(hwnd) = self.last_hwnd {
@@ -1643,7 +1665,7 @@ impl eframe::App for App {
                     egui::ViewportBuilder::default()
                         .with_inner_size([geometry.width_points, geometry.height_points])
                         .with_position(win_pos)
-                        .with_title(overlay_title.clone())
+                        .with_title(overlay_title)
                         .with_decorations(false)
                         .with_titlebar_shown(false)
                         .with_titlebar_buttons_shown(false)
@@ -1653,9 +1675,6 @@ impl eframe::App for App {
                         .with_transparent(transparent)
                         .with_mouse_passthrough(true),
                     move |ctx, _class| {
-                        ensure_windows_overlay_transparency();
-                        let palette = theme::Palette::from_config(&cfg);
-
                         let mut vis = egui::Visuals::light();
                         vis.panel_fill = egui::Color32::TRANSPARENT;
                         vis.window_fill = egui::Color32::TRANSPARENT;
@@ -1667,8 +1686,7 @@ impl eframe::App for App {
                             .show(ctx, |ui| {
                                 let panel_rect = ui.available_rect_before_wrap();
                                 let tray_rounding = egui::Rounding::same(
-                                    (TRAY_RADIUS as f32 * cfg.overlay_scale.clamp(0.6, 2.0))
-                                        / ctx.pixels_per_point(),
+                                    (TRAY_RADIUS as f32 * overlay_scale) / ctx.pixels_per_point(),
                                 );
                                 let tray_bg = egui::Color32::WHITE
                                     .linear_multiply(tray_alpha.clamp(0.0, 1.0));
