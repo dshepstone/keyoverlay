@@ -471,31 +471,33 @@ mod tests {
 
     #[test]
     fn config_serialize_deserialize_roundtrip() {
-        let mut config = AppConfig::default();
-        config.enable_green_cursor_ring = true;
-        config.cursor_theme = Some(CursorTheme::BlueGlow);
-        config.cursor_ring_size_px = 80.0;
-        config.cursor_ring_thickness_px = 6.0;
-        config.cursor_ring_opacity = 0.7;
-        config.cursor_glow = 0.5;
-        config.cursor_hide_after_ms = 1500;
-        config.enable_click_animation = true;
-        config.enable_keystroke_sounds = true;
-        config.sound_volume = 0.8;
-        config.sound_preset = "Mechanical".to_string();
+        let config = AppConfig {
+            enable_green_cursor_ring: true,
+            cursor_theme: Some(CursorTheme::BlueGlow),
+            cursor_ring_size_px: 80.0,
+            cursor_ring_thickness_px: 6.0,
+            cursor_ring_opacity: 0.7,
+            cursor_glow: 0.5,
+            cursor_hide_after_ms: 1500,
+            enable_click_animation: true,
+            enable_keystroke_sounds: true,
+            sound_volume: 0.8,
+            sound_preset: "Mechanical".to_string(),
+            ..AppConfig::default()
+        };
 
         let json = serde_json::to_string_pretty(&config).expect("serialize");
         let restored: AppConfig = serde_json::from_str(&json).expect("deserialize");
 
-        assert_eq!(restored.enable_green_cursor_ring, true);
+        assert!(restored.enable_green_cursor_ring);
         assert_eq!(restored.cursor_theme, Some(CursorTheme::BlueGlow));
         assert!((restored.cursor_ring_size_px - 80.0).abs() < f32::EPSILON);
         assert!((restored.cursor_ring_thickness_px - 6.0).abs() < f32::EPSILON);
         assert!((restored.cursor_ring_opacity - 0.7).abs() < f32::EPSILON);
         assert!((restored.cursor_glow - 0.5).abs() < f32::EPSILON);
         assert_eq!(restored.cursor_hide_after_ms, 1500);
-        assert_eq!(restored.enable_click_animation, true);
-        assert_eq!(restored.enable_keystroke_sounds, true);
+        assert!(restored.enable_click_animation);
+        assert!(restored.enable_keystroke_sounds);
         assert!((restored.sound_volume - 0.8).abs() < f32::EPSILON);
         assert_eq!(restored.sound_preset, "Mechanical");
     }
@@ -565,8 +567,10 @@ mod tests {
     #[test]
     fn cursor_ring_settings_from_config_themes() {
         use super::*;
-        let mut cfg = AppConfig::default();
-        cfg.enable_green_cursor_ring = true;
+        let mut cfg = AppConfig {
+            enable_green_cursor_ring: true,
+            ..AppConfig::default()
+        };
 
         // Default theme (None -> GreenRing)
         cfg.cursor_theme = None;

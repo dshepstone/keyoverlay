@@ -196,11 +196,17 @@ impl fmt::Display for Key {
             Key::Alt => "Alt",
             Key::Win => {
                 #[cfg(target_os = "windows")]
-                { "Win" }
+                {
+                    "Win"
+                }
                 #[cfg(target_os = "macos")]
-                { "Cmd" }
+                {
+                    "Cmd"
+                }
                 #[cfg(not(any(target_os = "windows", target_os = "macos")))]
-                { "Super" }
+                {
+                    "Super"
+                }
             }
             Key::CapsLock => "CapsLk",
             Key::PrintScreen => "PrtSc",

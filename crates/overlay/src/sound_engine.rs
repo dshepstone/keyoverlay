@@ -484,10 +484,12 @@ mod tests {
 
     #[test]
     fn sound_settings_from_config() {
-        let mut cfg = keyoverlay_core::AppConfig::default();
-        cfg.enable_keystroke_sounds = true;
-        cfg.sound_volume = 0.75;
-        cfg.sound_preset = "Pop".to_string();
+        let cfg = keyoverlay_core::AppConfig {
+            enable_keystroke_sounds: true,
+            sound_volume: 0.75,
+            sound_preset: "Pop".to_string(),
+            ..keyoverlay_core::AppConfig::default()
+        };
 
         let settings = SoundSettings::from_config(&cfg);
         assert!(settings.enabled);

@@ -12,7 +12,7 @@ fn main() -> Result<()> {
     let (tx, rx) = mpsc::channel();
 
     // Spawn the global input listener (keyboard + mouse via rdev).
-    let wake_repaint = Arc::new(|| keyoverlay_overlay::request_external_repaint());
+    let wake_repaint = Arc::new(keyoverlay_overlay::request_external_repaint);
     spawn_input_listener_with_wakeup(tx, Some(wake_repaint));
 
     let app_icon = load_app_icon();

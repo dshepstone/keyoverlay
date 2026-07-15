@@ -1362,10 +1362,8 @@ impl eframe::App for App {
                     "[overlay-minimize] UI minimized -> moved off-screen (overlay stays active)",
                 );
             }
-        } else if !self.ui_minimized && was_minimized {
-            if minimize_debug_enabled() {
-                eprintln!("[overlay-minimize] UI restored");
-            }
+        } else if !self.ui_minimized && was_minimized && minimize_debug_enabled() {
+            eprintln!("[overlay-minimize] UI restored");
         }
 
         // When the user clicks the taskbar icon of the off-screen window the
@@ -1518,8 +1516,9 @@ impl eframe::App for App {
                 let move_changed = self.last_sent_outer_pos != Some(win_pos);
                 let live_throttle = Duration::from_millis(10);
                 let allow_live_move = if self.manual_slider_dragging {
+                    // `Option::is_none_or` needs Rust 1.82; keep MSRV 1.74.
                     self.last_live_move_at
-                        .is_none_or(|t| now.duration_since(t) >= live_throttle)
+                        .map_or(true, |t| now.duration_since(t) >= live_throttle)
                         || self.manual_slider_drag_ended
                 } else {
                     true
