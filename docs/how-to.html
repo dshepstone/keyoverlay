@@ -4,7 +4,7 @@
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <title>How To Use KeyOverlay — install, configure, and record</title>
-  <meta name="description" content="Step-by-step guide to building, running, and configuring KeyOverlay: keystroke display, mouse visualization, cursor highlight, sounds, and overlay positioning.">
+  <meta name="description" content="Step-by-step guide to installing or building KeyOverlay: keystroke display, mouse visualization, cursor highlight, sounds, and overlay positioning.">
   <link rel="stylesheet" href="styles.css">
 </head>
 <body>
@@ -23,12 +23,12 @@
 <main class="doc">
   <div class="wrap">
     <h1>How to use KeyOverlay</h1>
-    <p class="lede">Everything from first build to a polished recording setup. Five minutes, start to finish.</p>
+    <p class="lede">Everything from first install to a polished recording setup. Five minutes, start to finish.</p>
 
     <div class="toc">
       <strong>On this page</strong>
       <ol>
-        <li><a href="#install">Install &amp; build</a></li>
+        <li><a href="#install">Install or build</a></li>
         <li><a href="#first-run">First run</a></li>
         <li><a href="#toggle">Turning the overlay on and off</a></li>
         <li><a href="#settings">The settings window, tab by tab</a></li>
@@ -41,13 +41,18 @@
       </ol>
     </div>
 
-    <h2 id="install">1. Install &amp; build</h2>
-    <p>KeyOverlay is distributed as source. Building it takes one command with the Rust toolchain
+    <h2 id="install">1. Install or build</h2>
+    <p>The easiest way to use KeyOverlay on Windows is to download the installer from the
+       <a href="https://github.com/dshepstone/keyoverlay/releases/tag/v0.2.0">v0.2.0 release page</a>.
+       Download and run
+       <a href="https://github.com/dshepstone/keyoverlay/releases/download/v0.2.0/KeyOverlay-v0.2.0-Windows-x64.exe">KeyOverlay-v0.2.0-Windows-x64.exe</a>
+       to install the app — you do not need to build it from source.</p>
+    <p>If you prefer to build KeyOverlay yourself, use the Rust toolchain
        (<a href="https://rustup.rs">rustup.rs</a>, Rust 1.74 or newer):</p>
 <pre><code>git clone https://github.com/dshepstone/keyoverlay.git
 cd keyoverlay
 cargo build --release -p keyoverlay-app</code></pre>
-    <p>The finished executable is at <code>target\release\keyoverlay-app.exe</code> on Windows
+    <p>The locally built executable is at <code>target\release\keyoverlay-app.exe</code> on Windows
        (<code>target/release/keyoverlay-app</code> elsewhere). Copy it anywhere you like — it is a
        single self-contained binary with the icon and sounds embedded.</p>
     <div class="note">
@@ -59,7 +64,7 @@ cargo build --release -p keyoverlay-app</code></pre>
 
     <h2 id="first-run">2. First run</h2>
     <ol>
-      <li>Launch <code>keyoverlay-app.exe</code>. The <strong>settings window</strong> opens; this is your control panel.</li>
+      <li>Launch KeyOverlay from the Start menu after installing it, or run <code>keyoverlay-app.exe</code> if you built it from source. The <strong>settings window</strong> opens; this is your control panel.</li>
       <li>The overlay itself is enabled by default. Press any key — a pill with the key name appears on screen.</li>
       <li>Click your mouse or scroll — the mouse icon lights up the matching button or shows a scroll arrow.</li>
       <li>The status line at the bottom of the sidebar shows a pulsing green dot while the overlay is active.</li>
