@@ -1,0 +1,235 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>KeyOverlay — show every keystroke and click on screen</title>
+  <meta name="description" content="KeyOverlay is a free, open-source Windows utility that displays your keyboard and mouse input in a clean always-on-top overlay. Perfect for tutorials, screen recordings, teaching, and live demos.">
+  <link rel="stylesheet" href="styles.css">
+</head>
+<body>
+
+<nav>
+  <div class="wrap">
+    <a class="brand" href="index.html"><span class="logo">K</span> KeyOverlay</a>
+    <div class="links">
+      <a href="index.html" class="active">Overview</a>
+      <a href="how-to.html">How&nbsp;To</a>
+      <a class="gh" href="https://github.com/dshepstone/keyoverlay">GitHub&nbsp;→</a>
+    </div>
+  </div>
+</nav>
+
+<header class="hero">
+  <div class="wrap">
+    <div class="badges">
+      <span class="badge">Windows 10 / 11</span>
+      <span class="badge">Built with Rust</span>
+      <span class="badge">v0.2.0</span>
+      <span class="badge mit">MIT — Free &amp; Open Source</span>
+    </div>
+
+    <h1>Show your audience <span class="hl">exactly what you press</span></h1>
+
+    <p class="tagline">
+      KeyOverlay displays every keystroke, shortcut, click, and scroll in a clean,
+      always-on-top overlay — so viewers can follow along instead of guessing
+      what just happened.
+    </p>
+
+    <div class="pill-row" aria-hidden="true">
+      <span class="pill">CTRL + SHIFT + P</span>
+      <span class="pill dim">🖱 Left Click</span>
+      <span class="pill">ENTER ⏎</span>
+    </div>
+
+    <div class="cta-row">
+      <a class="btn primary" href="how-to.html">Get Started</a>
+      <a class="btn secondary" href="https://github.com/dshepstone/keyoverlay">View Source on GitHub</a>
+    </div>
+  </div>
+</header>
+
+<section>
+  <div class="wrap">
+    <h2>Why KeyOverlay?</h2>
+    <p class="section-sub">
+      Made for anyone who demonstrates software on a screen. Your hands are on the
+      keyboard — KeyOverlay makes sure the screen tells that story.
+    </p>
+
+    <div class="grid cols-2">
+      <div class="card">
+        <span class="icon">⚡</span>
+        <h3>Lightweight by design</h3>
+        <p>A small native Rust application with no runtime, no browser engine, and
+           no background bloat. It idles quietly and stays responsive during the
+           fastest typing bursts.</p>
+      </div>
+      <div class="card">
+        <span class="icon">👻</span>
+        <h3>Never in your way</h3>
+        <p>The overlay is transparent, always on top, and fully click-through. It
+           never steals focus, never blocks a click, and never interferes with the
+           application you're demonstrating.</p>
+      </div>
+      <div class="card">
+        <span class="icon">🎯</span>
+        <h3>Built for recordings</h3>
+        <p>Crisp, high-contrast key pills read clearly at any capture resolution,
+           and the overlay scales for high-DPI displays — so shortcuts stay legible
+           in the final video, not just on your monitor.</p>
+      </div>
+      <div class="card">
+        <span class="icon">🔓</span>
+        <h3>Free and open source</h3>
+        <p>MIT-licensed with the full source on GitHub. Use it in classrooms,
+           companies, and commercial videos. Audit it, fork it, improve it —
+           contributions are welcome.</p>
+      </div>
+    </div>
+  </div>
+</section>
+
+<section class="alt">
+  <div class="wrap">
+    <h2>Best for…</h2>
+    <p class="section-sub">If people watch your screen, KeyOverlay earns its place in the corner of it.</p>
+    <ul class="checks">
+      <li>Software tutorials &amp; screen recordings</li>
+      <li>Teaching and classroom demonstrations</li>
+      <li>Live presentations and webinars</li>
+      <li>Live streaming and coding sessions</li>
+      <li>Keyboard-shortcut training videos</li>
+      <li>Pair programming and remote support</li>
+      <li>Accessibility &amp; UX walkthroughs</li>
+      <li>Conference talks and product demos</li>
+    </ul>
+  </div>
+</section>
+
+<section>
+  <div class="wrap">
+    <h2>Everything it can do</h2>
+    <p class="section-sub">Every feature is optional and adjustable from the built-in settings window — no config files to hand-edit.</p>
+
+    <div class="grid">
+      <div class="card">
+        <span class="icon">⌨️</span>
+        <h3>Keystroke display</h3>
+        <p>Every key appears as a large, readable pill the moment you press it.
+           Modifier combos like <strong>Ctrl + Shift + S</strong> are grouped and
+           ordered consistently, and held keys stay visible until released.</p>
+      </div>
+      <div class="card">
+        <span class="icon">🖱️</span>
+        <h3>Mouse visualization</h3>
+        <p>An animated mouse icon highlights left, middle, and right buttons as you
+           click, with directional arrows for scroll-wheel activity — optional
+           event text included.</p>
+      </div>
+      <div class="card">
+        <span class="icon">⭕</span>
+        <h3>Cursor highlight</h3>
+        <p>Six cursor themes — rings, dots, and glows — follow your pointer so
+           viewers never lose it. Adjustable size, thickness, opacity, glow, and an
+           auto-hide timer for when the mouse is idle.</p>
+      </div>
+      <div class="card">
+        <span class="icon">💥</span>
+        <h3>Click animation</h3>
+        <p>An expanding ring pulses outward on every click, making mouse actions
+           unmistakable in recordings — even at a glance in a video thumbnail.</p>
+      </div>
+      <div class="card">
+        <span class="icon">🔊</span>
+        <h3>Keystroke sounds</h3>
+        <p>Optional audio feedback with four generated sound packs — Typewriter,
+           Mechanical, Soft Click, and Pop — with adjustable volume. No audio files
+           needed; the sounds are synthesized in-app.</p>
+      </div>
+      <div class="card">
+        <span class="icon">🎨</span>
+        <h3>Themes &amp; appearance</h3>
+        <p>Dark and light themes out of the box, plus a fully custom mode with your
+           own colors for keys, modifiers, mouse, and scroll events. Font size,
+           opacity, scale, and pill rounding are all tunable.</p>
+      </div>
+      <div class="card">
+        <span class="icon">📍</span>
+        <h3>Flexible positioning</h3>
+        <p>Anchor the overlay to any corner, edge, or the center of the screen — or
+           place it pixel-perfectly with manual X/Y coordinates. Margins, size, and
+           display-scaling baselines keep it where you put it.</p>
+      </div>
+      <div class="card">
+        <span class="icon">💾</span>
+        <h3>Settings that stick</h3>
+        <p>Every option is saved automatically and restored on the next launch.
+           Settings are validated on load, so an old or damaged config file can
+           never break the app.</p>
+      </div>
+    </div>
+
+    <h3>Cursor highlight themes</h3>
+    <div class="theme-dots" aria-hidden="true">
+      <div class="tdot"><div class="dot ring-green"></div>Green Ring</div>
+      <div class="tdot"><div class="dot ring-blue"></div>Blue Glow</div>
+      <div class="tdot"><div class="dot fill-red"></div>Red Dot</div>
+      <div class="tdot"><div class="dot ring-yellow"></div>Yellow Pulse</div>
+      <div class="tdot"><div class="dot ring-purple"></div>Purple Haze</div>
+      <div class="tdot"><div class="dot fill-white"></div>White Circle</div>
+    </div>
+  </div>
+</section>
+
+<section class="alt">
+  <div class="wrap">
+    <h2>Open source, no strings attached</h2>
+    <p class="section-sub">
+      KeyOverlay is released under the MIT license. That means it's free for
+      personal, educational, and commercial use — forever.
+    </p>
+    <div class="grid">
+      <div class="card">
+        <span class="icon">🦀</span>
+        <h3>Native Rust workspace</h3>
+        <p>Four focused crates — core, input, overlay, and app — with a test suite
+           covering key formatting, positioning math, settings validation, and
+           animation timing.</p>
+      </div>
+      <div class="card">
+        <span class="icon">🛡️</span>
+        <h3>Nothing leaves your machine</h3>
+        <p>Input is only used to draw the overlay. There is no network code, no
+           telemetry, and no logging of what you type. The source is right there to
+           verify it.</p>
+      </div>
+      <div class="card">
+        <span class="icon">🤝</span>
+        <h3>Contributions welcome</h3>
+        <p>Found a bug or want a feature? Open an issue or a pull request on
+           GitHub. CI checks formatting, linting, tests, and release builds on
+           every change.</p>
+      </div>
+    </div>
+
+    <div class="cta-row">
+      <a class="btn primary" href="how-to.html">Read the How-To Guide</a>
+      <a class="btn secondary" href="https://github.com/dshepstone/keyoverlay">Star on GitHub</a>
+    </div>
+  </div>
+</section>
+
+<footer>
+  <div class="wrap">
+    <p>
+      KeyOverlay v0.2.0 · MIT License ·
+      <a href="https://github.com/dshepstone/keyoverlay">github.com/dshepstone/keyoverlay</a>
+    </p>
+    <p>Primary platform: Windows 10/11. The project also compiles on Linux and macOS for development.</p>
+  </div>
+</footer>
+
+</body>
+</html>

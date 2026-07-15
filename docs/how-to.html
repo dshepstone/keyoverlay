@@ -1,0 +1,228 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>How To Use KeyOverlay — install, configure, and record</title>
+  <meta name="description" content="Step-by-step guide to building, running, and configuring KeyOverlay: keystroke display, mouse visualization, cursor highlight, sounds, and overlay positioning.">
+  <link rel="stylesheet" href="styles.css">
+</head>
+<body>
+
+<nav>
+  <div class="wrap">
+    <a class="brand" href="index.html"><span class="logo">K</span> KeyOverlay</a>
+    <div class="links">
+      <a href="index.html">Overview</a>
+      <a href="how-to.html" class="active">How&nbsp;To</a>
+      <a class="gh" href="https://github.com/dshepstone/keyoverlay">GitHub&nbsp;→</a>
+    </div>
+  </div>
+</nav>
+
+<main class="doc">
+  <div class="wrap">
+    <h1>How to use KeyOverlay</h1>
+    <p class="lede">Everything from first build to a polished recording setup. Five minutes, start to finish.</p>
+
+    <div class="toc">
+      <strong>On this page</strong>
+      <ol>
+        <li><a href="#install">Install &amp; build</a></li>
+        <li><a href="#first-run">First run</a></li>
+        <li><a href="#toggle">Turning the overlay on and off</a></li>
+        <li><a href="#settings">The settings window, tab by tab</a></li>
+        <li><a href="#position">Positioning the overlay</a></li>
+        <li><a href="#cursor">Cursor highlight &amp; click animation</a></li>
+        <li><a href="#sounds">Keystroke sounds</a></li>
+        <li><a href="#config">Where settings are stored</a></li>
+        <li><a href="#recording">Tips for recordings</a></li>
+        <li><a href="#troubleshooting">Troubleshooting</a></li>
+      </ol>
+    </div>
+
+    <h2 id="install">1. Install &amp; build</h2>
+    <p>KeyOverlay is distributed as source. Building it takes one command with the Rust toolchain
+       (<a href="https://rustup.rs">rustup.rs</a>, Rust 1.74 or newer):</p>
+<pre><code>git clone https://github.com/dshepstone/keyoverlay.git
+cd keyoverlay
+cargo build --release -p keyoverlay-app</code></pre>
+    <p>The finished executable is at <code>target\release\keyoverlay-app.exe</code> on Windows
+       (<code>target/release/keyoverlay-app</code> elsewhere). Copy it anywhere you like — it is a
+       single self-contained binary with the icon and sounds embedded.</p>
+    <div class="note">
+      <strong>Platforms:</strong> Windows 10/11 is the primary, fully supported target. The project
+      also compiles on Linux and macOS for development; on those platforms some Windows-specific
+      features (cursor highlight window, keystroke sounds, click-through region shaping) are stubbed.
+      On macOS, global input capture additionally requires granting Accessibility permission.
+    </div>
+
+    <h2 id="first-run">2. First run</h2>
+    <ol>
+      <li>Launch <code>keyoverlay-app.exe</code>. The <strong>settings window</strong> opens; this is your control panel.</li>
+      <li>The overlay itself is enabled by default. Press any key — a pill with the key name appears on screen.</li>
+      <li>Click your mouse or scroll — the mouse icon lights up the matching button or shows a scroll arrow.</li>
+      <li>The status line at the bottom of the sidebar shows a pulsing green dot while the overlay is active.</li>
+    </ol>
+    <p>The overlay window is click-through and never takes focus, so you can keep working normally
+       while it is visible. When you stop typing, the overlay fades out on its own.</p>
+
+    <h2 id="toggle">3. Turning the overlay on and off</h2>
+    <p>Use the <kbd>ON</kbd> / <kbd>OFF</kbd> button in the top-right corner of the settings window.
+       One click toggles the keystroke overlay; the setting is remembered across restarts.
+       Minimizing the settings window keeps the overlay running — restore it from the taskbar
+       whenever you want to change something.</p>
+
+    <h2 id="settings">4. The settings window, tab by tab</h2>
+    <table>
+      <tr><th>Tab</th><th>What you'll find there</th></tr>
+      <tr>
+        <td><strong>General</strong></td>
+        <td>Color theme (Dark / Light / Custom with per-element colors), font size, overlay scale,
+            content and background opacity, pill rounding, and the <em>Save &amp; Apply</em> /
+            <em>Reset Defaults</em> buttons.</td>
+      </tr>
+      <tr>
+        <td><strong>Keystroke</strong></td>
+        <td>Toggles for keyboard strokes, mouse clicks, mouse-click text, the mouse icon, and scroll
+            events — plus display duration, fade duration, and the maximum number of visible events.</td>
+      </tr>
+      <tr>
+        <td><strong>Cursor</strong></td>
+        <td>The cursor highlight: theme picker, size, thickness, opacity, glow, auto-hide timer,
+            click animation, and whether the pointer sits at the circle's center or its lower-right edge.</td>
+      </tr>
+      <tr>
+        <td><strong>Sounds</strong></td>
+        <td>Keystroke sounds on/off, volume, and the sound pack picker
+            (Typewriter, Mechanical, Soft Click, Pop, or None).</td>
+      </tr>
+      <tr>
+        <td><strong>Position</strong></td>
+        <td>Display baseline (resolution and Windows display scale), position presets, layout
+            direction, manual X/Y sliders, margins, and overlay size.</td>
+      </tr>
+      <tr>
+        <td><strong>License / About</strong></td>
+        <td>The MIT license text, version information, and a feature summary.</td>
+      </tr>
+    </table>
+    <p>Most controls apply instantly. On the General tab, click <em>Save &amp; Apply</em> after
+       editing. Changes are written to disk automatically a moment after you stop adjusting.</p>
+
+    <h2 id="position">5. Positioning the overlay</h2>
+    <ol>
+      <li>Open the <strong>Position</strong> tab.</li>
+      <li>Set the <strong>display baseline</strong> to match your monitor: pick your resolution
+          (e.g. 1920&nbsp;×&nbsp;1080) and your Windows display scaling (e.g. 125%). This lets the
+          presets land exactly where you expect on high-DPI screens.</li>
+      <li>Choose a preset — any corner, top/bottom center, or screen center — and adjust the
+          horizontal and vertical margins to taste.</li>
+      <li>For pixel-perfect placement, choose <strong>Manual (X/Y)</strong> and drag the X and Y
+          sliders; the overlay moves live so you can see exactly where it lands. The
+          <em>Snap to lower-right</em> button is a quick reset.</li>
+    </ol>
+    <div class="note">
+      <strong>Multiple monitors:</strong> manual coordinates may be negative, which is normal for a
+      monitor positioned to the left of (or above) your primary display.
+    </div>
+
+    <h2 id="cursor">6. Cursor highlight &amp; click animation</h2>
+    <ol>
+      <li>Open the <strong>Cursor</strong> tab and switch on <em>Enable cursor highlight</em>.</li>
+      <li>Pick one of six themes: <strong>Green Ring</strong>, <strong>Blue Glow</strong>,
+          <strong>Red Dot</strong>, <strong>Yellow Pulse</strong>, <strong>Purple Haze</strong>, or
+          <strong>White Circle</strong>. Rings outline the pointer; dots fill behind it; glow themes
+          add a soft halo.</li>
+      <li>Tune <em>Size</em>, <em>Thickness</em>, <em>Opacity</em>, and <em>Glow</em> until it reads
+          well on your background.</li>
+      <li>Optionally set <em>Hide cursor after</em> so the highlight disappears when the mouse has
+          been idle (0 = never hide). It reappears the moment you move or click.</li>
+      <li>Switch on <em>Enable click animation</em> for an expanding pulse ring on every click —
+          the single best upgrade for recorded demos.</li>
+    </ol>
+
+    <h2 id="sounds">7. Keystroke sounds</h2>
+    <ol>
+      <li>Open the <strong>Sounds</strong> tab and switch on <em>Enable keystroke sounds</em>.</li>
+      <li>Choose a pack: <strong>Typewriter</strong> (sharp and snappy), <strong>Mechanical</strong>
+          (lower, keyboard-like), <strong>Soft Click</strong> (gentle), or <strong>Pop</strong>
+          (round and bubbly).</li>
+      <li>Set the volume. Sounds play on key-down for regular keys; holding a key or pressing bare
+          modifiers stays silent, so fast typing never turns into noise.</li>
+    </ol>
+
+    <h2 id="config">8. Where settings are stored</h2>
+    <p>Settings live in a single JSON file:</p>
+    <table>
+      <tr><th>Platform</th><th>Path</th></tr>
+      <tr><td>Windows</td><td><code>%APPDATA%\keyoverlay\config.json</code></td></tr>
+      <tr><td>Linux</td><td><code>~/.config/keyoverlay/config.json</code></td></tr>
+      <tr><td>macOS</td><td><code>~/Library/Application Support/keyoverlay/config.json</code></td></tr>
+    </table>
+    <p>The file is written atomically and validated on load — out-of-range or missing values fall
+       back to safe defaults, so you can hand-edit it (or delete it to start fresh) without risk.
+       <em>Reset Defaults</em> on the General tab does the same from inside the app.</p>
+
+    <h2 id="recording">9. Tips for recordings</h2>
+    <ul>
+      <li><strong>Match the baseline first.</strong> Set the Position tab's resolution and scale to
+          your recording monitor before fine-tuning placement.</li>
+      <li><strong>Bottom center</strong> works well for tutorials — viewers' eyes are usually on the
+          upper two-thirds of the screen.</li>
+      <li><strong>Bump the overlay scale</strong> (1.2–1.5×) if you record at 1080p but publish at
+          720p, so shortcuts stay readable after downscaling.</li>
+      <li><strong>Pair the cursor highlight with click animation</strong> for mouse-heavy demos, and
+          set a 2–3 second auto-hide so the ring vanishes during narration pauses.</li>
+      <li><strong>Longer display duration</strong> (2–3 s) gives viewers time to read complex
+          shortcut chords; shorter (0.5–1 s) keeps fast typing tidy.</li>
+    </ul>
+
+    <h2 id="troubleshooting">10. Troubleshooting</h2>
+    <table>
+      <tr><th>Symptom</th><th>Fix</th></tr>
+      <tr>
+        <td>Nothing appears when typing</td>
+        <td>Check the <kbd>ON</kbd>/<kbd>OFF</kbd> toggle in the settings window, and that
+            <em>Show keyboard strokes</em> is enabled on the Keystroke tab.</td>
+      </tr>
+      <tr>
+        <td>Overlay is in the wrong place after changing monitors or scaling</td>
+        <td>Update the display baseline (resolution + scale) on the Position tab; presets are
+            computed from it.</td>
+      </tr>
+      <tr>
+        <td>Sounds don't play</td>
+        <td>Make sure the pack isn't set to <em>None</em> and the volume is above zero.</td>
+      </tr>
+      <tr>
+        <td>Cursor ring not visible</td>
+        <td>Increase size/opacity, and check the auto-hide timer — 0 means never hide. The ring is a
+            Windows-only feature.</td>
+      </tr>
+      <tr>
+        <td>Settings look wrong or corrupted</td>
+        <td>Click <em>Reset Defaults</em>, or delete <code>config.json</code> (see above) and restart.</td>
+      </tr>
+      <tr>
+        <td>Something else?</td>
+        <td>Open an issue at
+            <a href="https://github.com/dshepstone/keyoverlay/issues">github.com/dshepstone/keyoverlay/issues</a>
+            — include your Windows version and display scaling.</td>
+      </tr>
+    </table>
+  </div>
+</main>
+
+<footer>
+  <div class="wrap">
+    <p>
+      KeyOverlay v0.2.0 · MIT License ·
+      <a href="https://github.com/dshepstone/keyoverlay">github.com/dshepstone/keyoverlay</a>
+    </p>
+    <p>Primary platform: Windows 10/11. The project also compiles on Linux and macOS for development.</p>
+  </div>
+</footer>
+
+</body>
+</html>
