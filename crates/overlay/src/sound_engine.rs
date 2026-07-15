@@ -276,13 +276,8 @@ mod imp {
                     if debug_enabled() {
                         eprintln!("[sound-engine] audio thread started");
                     }
-                    loop {
-                        // Block until a command arrives.
-                        let cmd = match rx.recv() {
-                            Ok(cmd) => cmd,
-                            Err(_) => break, // channel closed
-                        };
-
+                    // Block until a command arrives; exit when the channel closes.
+                    while let Ok(cmd) = rx.recv() {
                         // Drain to the newest Play command so we don't queue up
                         // a backlog of sounds during fast typing.
                         let cmd = rx.try_iter().fold(cmd, |_prev, newer| newer);
