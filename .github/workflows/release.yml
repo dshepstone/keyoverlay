@@ -1,0 +1,96 @@
+name: Release
+
+# Builds the Windows installer.
+# - Pushing a tag like `v0.3.0` builds it and publishes a GitHub Release
+#   with the installer, the portable .exe, and SHA-256 checksums.
+# - Running the workflow manually (Actions tab -> Release -> Run workflow)
+#   builds the installer as a downloadable workflow artifact only.
+# - Pull requests that touch the installer build it too, as a check.
+
+on:
+  push:
+    tags: [ 'v*' ]
+  pull_request:
+    paths:
+      - 'installer/**'
+      - '.github/workflows/release.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  windows-installer:
+    runs-on: windows-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Rust
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Determine version
+        id: version
+        shell: pwsh
+        run: |
+          $cargo = Get-Content Cargo.toml -Raw
+          if ($cargo -notmatch '(?m)^\[workspace\.package\][^\[]*?^version\s*=\s*"([^"]+)"') {
+            throw "Could not read workspace version from Cargo.toml"
+          }
+          $cargoVersion = $Matches[1]
+          if ("${{ github.ref_type }}" -eq "tag") {
+            $tagVersion = "${{ github.ref_name }}".TrimStart('v')
+            if ($tagVersion -ne $cargoVersion) {
+              throw "Tag version '$tagVersion' does not match Cargo.toml version '$cargoVersion'. Bump [workspace.package] version first."
+            }
+          }
+          "version=$cargoVersion" >> $env:GITHUB_OUTPUT
+
+      - name: Build (release)
+        run: cargo build --release -p keyoverlay-app --locked
+
+      - name: Install Inno Setup
+        shell: pwsh
+        run: |
+          if (-not (Test-Path "${env:ProgramFiles(x86)}\Inno Setup 6\ISCC.exe")) {
+            choco install innosetup -y --no-progress
+          }
+
+      - name: Build installer
+        shell: pwsh
+        run: |
+          & "${env:ProgramFiles(x86)}\Inno Setup 6\ISCC.exe" "/DAppVersion=${{ steps.version.outputs.version }}" installer\keyoverlay.iss
+          if ($LASTEXITCODE -ne 0) { throw "ISCC failed with exit code $LASTEXITCODE" }
+
+      - name: Collect release files
+        shell: pwsh
+        run: |
+          $v = "${{ steps.version.outputs.version }}"
+          New-Item -ItemType Directory -Force dist | Out-Null
+          Copy-Item "target\installer\KeyOverlay-Setup-$v-x64.exe" dist\
+          Copy-Item target\release\keyoverlay-app.exe "dist\KeyOverlay-$v-x64-portable.exe"
+          Get-ChildItem dist\*.exe | ForEach-Object {
+            "$((Get-FileHash $_.FullName -Algorithm SHA256).Hash.ToLower())  $($_.Name)"
+          } | Set-Content -Encoding ascii dist\SHA256SUMS.txt
+          Get-Content dist\SHA256SUMS.txt
+
+      - name: Upload workflow artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: KeyOverlay-${{ steps.version.outputs.version }}-windows
+          path: dist/*
+
+      - name: Publish GitHub Release
+        if: github.ref_type == 'tag'
+        uses: softprops/action-gh-release@v2
+        with:
+          name: KeyOverlay ${{ steps.version.outputs.version }}
+          generate_release_notes: true
+          files: dist/*
+          body: |
+            ## Download
+
+            - **KeyOverlay-Setup-${{ steps.version.outputs.version }}-x64.exe** — recommended. Installs KeyOverlay, adds it to the Start menu, and registers an uninstaller in *Settings → Apps*.
+            - **KeyOverlay-${{ steps.version.outputs.version }}-x64-portable.exe** — no install; run it from any folder.
+
+            Requires Windows 10 or 11 (64-bit). The installer is not code-signed yet, so Windows SmartScreen may show "Windows protected your PC" — click **More info → Run anyway**.

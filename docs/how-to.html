@@ -42,11 +42,21 @@
     </div>
 
     <h2 id="install">1. Install or build</h2>
-    <p>The easiest way to use KeyOverlay on Windows is to download the installer from the
-       <a href="https://github.com/dshepstone/keyoverlay/releases/tag/v0.2.0">v0.2.0 release page</a>.
-       Download and run
-       <a href="https://github.com/dshepstone/keyoverlay/releases/download/v0.2.0/KeyOverlay-v0.2.0-Windows-x64.exe">KeyOverlay-v0.2.0-Windows-x64.exe</a>
-       to install the app — you do not need to build it from source.</p>
+    <p>The easiest way to use KeyOverlay on Windows 10/11 is the installer. Open the
+       <a href="https://github.com/dshepstone/keyoverlay/releases/latest">latest release</a>,
+       download <code>KeyOverlay-Setup-&lt;version&gt;-x64.exe</code>, and run it. The installer:</p>
+    <ul>
+      <li>installs for your user account by default (no admin rights needed), or for all users if you choose;</li>
+      <li>adds <strong>KeyOverlay</strong> to the Start menu, along with an uninstall shortcut;</li>
+      <li>can optionally add a desktop shortcut and start KeyOverlay when you sign in;</li>
+      <li>can be removed later from <strong>Settings → Apps → Installed apps</strong>.</li>
+    </ul>
+    <p>Prefer not to install anything? Each release also includes a portable
+       <code>KeyOverlay-&lt;version&gt;-x64-portable.exe</code> you can run from any folder.</p>
+    <div class="note">
+      <strong>SmartScreen:</strong> releases are not code-signed yet, so Windows may show
+      “Windows protected your PC”. Click <strong>More info → Run anyway</strong>.
+    </div>
     <p>If you prefer to build KeyOverlay yourself, use the Rust toolchain
        (<a href="https://rustup.rs">rustup.rs</a>, Rust 1.74 or newer):</p>
 <pre><code>git clone https://github.com/dshepstone/keyoverlay.git

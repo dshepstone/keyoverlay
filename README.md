@@ -30,6 +30,22 @@ crates/
   app/     # binary, lifecycle, tray, wiring
 ```
 
+## Install (Windows 10/11)
+
+Download **`KeyOverlay-Setup-<version>-x64.exe`** from the
+[latest release](https://github.com/dshepstone/keyoverlay/releases/latest) and run it.
+
+The installer:
+
+- installs for the current user by default (no admin rights needed), or for all users if you choose;
+- adds **KeyOverlay** to the Start menu, with an uninstall shortcut;
+- can optionally add a desktop shortcut and start KeyOverlay when you sign in;
+- registers an uninstaller in **Settings → Apps → Installed apps**.
+
+A portable `KeyOverlay-<version>-x64-portable.exe` is attached to each release too, if you
+would rather not install anything. Releases are not code-signed yet, so SmartScreen may warn
+"Windows protected your PC" — click **More info → Run anyway**.
+
 ## Build & run
 
 ```bash
@@ -45,6 +61,25 @@ cargo run -p keyoverlay-app
 
 This opens a small always-on-top overlay window showing "KeyOverlay – overlay shell" and a list
 of recent key events.
+
+## Building the installer
+
+The installer is built with [Inno Setup 6](https://jrsoftware.org/isinfo.php) from
+[`installer/keyoverlay.iss`](installer/keyoverlay.iss):
+
+```powershell
+cargo build --release -p keyoverlay-app
+iscc /DAppVersion=0.2.0 installer\keyoverlay.iss   # output: target\installer\
+```
+
+### Publishing a release
+
+1. Bump `version` under `[workspace.package]` in `Cargo.toml` (e.g. `0.3.0`) and commit.
+2. Tag and push: `git tag v0.3.0 && git push origin v0.3.0`.
+
+The [Release workflow](.github/workflows/release.yml) checks the tag matches `Cargo.toml`, builds
+the app and installer on Windows, and publishes a GitHub Release with the installer, the
+portable `.exe`, and `SHA256SUMS.txt`.
 
 ## Contributing
 
