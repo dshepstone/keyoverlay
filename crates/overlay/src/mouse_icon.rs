@@ -47,7 +47,7 @@ pub fn draw_mouse_icon(
         egui::Rect::from_min_size(icon_rect.min + egui::vec2(4.0, 4.0), egui::vec2(40.0, 60.0));
 
     painter.rect_filled(body, 16.0, body_color);
-    painter.rect_stroke(body, 16.0, egui::Stroke::new(1.5, outline_color));
+    painter.rect_stroke(body, 16.0, egui::Stroke::new(1.5_f32, outline_color));
 
     // ── Divider lines (two vertical lines splitting top into 3 zones) ──
     let mid_x = body.center().x;
@@ -61,7 +61,7 @@ pub fn draw_mouse_icon(
             egui::pos2(left_div_x, top_y + 6.0),
             egui::pos2(left_div_x, div_y),
         ],
-        egui::Stroke::new(1.0, outline_color),
+        egui::Stroke::new(1.0_f32, outline_color),
     );
 
     // Right divider
@@ -71,7 +71,7 @@ pub fn draw_mouse_icon(
             egui::pos2(right_div_x, top_y + 6.0),
             egui::pos2(right_div_x, div_y),
         ],
-        egui::Stroke::new(1.0, outline_color),
+        egui::Stroke::new(1.0_f32, outline_color),
     );
 
     // Horizontal divider below buttons
@@ -80,7 +80,7 @@ pub fn draw_mouse_icon(
             egui::pos2(body.min.x + 4.0, div_y),
             egui::pos2(body.max.x - 4.0, div_y),
         ],
-        egui::Stroke::new(1.0, outline_color),
+        egui::Stroke::new(1.0_f32, outline_color),
     );
 
     // ── Button highlights ──
@@ -134,7 +134,7 @@ pub fn draw_mouse_icon(
 
     // ── Scroll wheel indicator (small oval in center) ──
     let wheel_center = egui::pos2(mid_x, top_y + 14.0);
-    painter.circle_stroke(wheel_center, 3.5, egui::Stroke::new(1.0, outline_color));
+    painter.circle_stroke(wheel_center, 3.5, egui::Stroke::new(1.0_f32, outline_color));
 
     if let Some((dir, arrow_alpha)) = scroll_arrow {
         let arrow_color = apply_alpha(palette.mouse_highlight, arrow_alpha.clamp(0.0, 1.0));
@@ -145,8 +145,8 @@ pub fn draw_mouse_icon(
         let center_x = mid_x;
         let head_half_width = 3.2;
         let head_height = 4.0;
-        let stroke_outer = egui::Stroke::new(2.2, arrow_color);
-        let stroke_inner = egui::Stroke::new(1.2, arrow_color);
+        let stroke_outer = egui::Stroke::new(2.2_f32, arrow_color);
+        let stroke_inner = egui::Stroke::new(1.2_f32, arrow_color);
 
         let (tail_y, head_tip_y, head_base_y) = match dir {
             ScrollArrowDirection::Up => (

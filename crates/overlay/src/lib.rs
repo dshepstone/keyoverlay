@@ -1695,8 +1695,10 @@ impl eframe::App for App {
                                 }
 
                                 if region_debug_bounds_enabled() {
-                                    let window_debug_stroke =
-                                        egui::Stroke::new(1.0, egui::Color32::from_rgb(0, 255, 0));
+                                    let window_debug_stroke = egui::Stroke::new(
+                                        1.0_f32,
+                                        egui::Color32::from_rgb(0, 255, 0),
+                                    );
                                     let rounding = egui::Rounding::same(0.0);
                                     paint_rect_stroke_inside(
                                         ui,
@@ -1706,7 +1708,7 @@ impl eframe::App for App {
                                     );
 
                                     let pill_debug_stroke = egui::Stroke::new(
-                                        1.0,
+                                        1.0_f32,
                                         egui::Color32::from_rgb(255, 0, 255),
                                     );
                                     let rounding = egui::Rounding::same(0.0);
