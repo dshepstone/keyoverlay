@@ -32,8 +32,10 @@ crates/
 
 ## Install (Windows 10/11)
 
-Download **`KeyOverlay-Setup-<version>-x64.exe`** from the
-[latest release](https://github.com/dshepstone/keyoverlay/releases/latest) and run it.
+Open the [Releases page](https://github.com/dshepstone/keyoverlay/releases), download
+**`KeyOverlay-Setup-<version>-x64.exe`** from the newest release, and run it. (Releases up to
+v0.2.0 ship only the program itself, `KeyOverlay-v0.2.0-Windows-x64.exe`, which runs without
+installing.)
 
 The installer:
 
