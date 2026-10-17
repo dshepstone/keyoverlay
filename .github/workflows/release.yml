@@ -1,0 +1,130 @@
+name: Release
+
+# Builds the Windows installer.
+# - Pushing a tag like `v0.3.0` builds it and publishes a GitHub Release
+#   with a zip (installer + INSTALL.txt + LICENSE.txt) and SHA-256 checksums.
+# - Running the workflow manually (Actions tab -> Release -> Run workflow)
+#   builds the installer as a downloadable workflow artifact only.
+# - Pull requests that touch the installer build it too, as a check.
+
+on:
+  push:
+    tags: [ 'v*' ]
+  pull_request:
+    paths:
+      - 'installer/**'
+      - '.github/workflows/release.yml'
+  workflow_dispatch:
+
+# Read-only by default: the build job runs PR-controlled code (build
+# scripts, installer inputs). Only the tag-only publish job can write.
+permissions:
+  contents: read
+
+jobs:
+  windows-installer:
+    runs-on: windows-latest
+    outputs:
+      version: ${{ steps.version.outputs.version }}
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+
+      - name: Setup Rust
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Determine version
+        id: version
+        shell: pwsh
+        run: |
+          $cargo = Get-Content Cargo.toml -Raw
+          if ($cargo -notmatch '(?m)^\[workspace\.package\][^\[]*?^version\s*=\s*"([^"]+)"') {
+            throw "Could not read workspace version from Cargo.toml"
+          }
+          $cargoVersion = $Matches[1]
+          if ("${{ github.ref_type }}" -eq "tag") {
+            $tagVersion = "${{ github.ref_name }}".TrimStart('v')
+            if ($tagVersion -ne $cargoVersion) {
+              throw "Tag version '$tagVersion' does not match Cargo.toml version '$cargoVersion'. Bump [workspace.package] version first."
+            }
+          }
+          "version=$cargoVersion" >> $env:GITHUB_OUTPUT
+
+      - name: Build (release)
+        run: cargo build --release -p keyoverlay-app --locked
+
+      - name: Install Inno Setup
+        shell: pwsh
+        run: |
+          if (-not (Test-Path "${env:ProgramFiles(x86)}\Inno Setup 6\ISCC.exe")) {
+            choco install innosetup -y --no-progress
+          }
+
+      - name: Build installer
+        shell: pwsh
+        run: |
+          & "${env:ProgramFiles(x86)}\Inno Setup 6\ISCC.exe" "/DAppVersion=${{ steps.version.outputs.version }}" installer\keyoverlay.iss
+          if ($LASTEXITCODE -ne 0) { throw "ISCC failed with exit code $LASTEXITCODE" }
+
+      - name: Package release zip
+        shell: pwsh
+        run: |
+          $v = "${{ steps.version.outputs.version }}"
+          $name = "KeyOverlay-$v-Windows-x64"
+          $pkg = "package\$name"
+          New-Item -ItemType Directory -Force $pkg, dist | Out-Null
+          Copy-Item "target\installer\KeyOverlay-Setup-$v-x64.exe" $pkg\
+          Copy-Item installer\INSTALL.txt $pkg\
+          Copy-Item LICENSE "$pkg\LICENSE.txt"
+          # Notepad-friendly line endings for the text files.
+          Get-ChildItem $pkg\*.txt | ForEach-Object {
+            $t = [IO.File]::ReadAllText($_.FullName) -replace "`r?`n", "`r`n"
+            [IO.File]::WriteAllText($_.FullName, $t)
+          }
+          Compress-Archive -Path $pkg -DestinationPath "dist\$name.zip"
+          Get-ChildItem dist\*.zip | ForEach-Object {
+            "$((Get-FileHash $_.FullName -Algorithm SHA256).Hash.ToLower())  $($_.Name)"
+          } | Set-Content -Encoding ascii dist\SHA256SUMS.txt
+          Get-Content dist\SHA256SUMS.txt
+          Get-ChildItem -Recurse package | Select-Object FullName, Length
+
+      - name: Upload workflow artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: KeyOverlay-${{ steps.version.outputs.version }}-windows
+          path: dist/*
+
+  publish:
+    needs: windows-installer
+    if: github.ref_type == 'tag'
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - name: Download build
+        uses: actions/download-artifact@v4
+        with:
+          name: KeyOverlay-${{ needs.windows-installer.outputs.version }}-windows
+          path: dist
+
+      - name: Publish GitHub Release
+        uses: softprops/action-gh-release@v2
+        with:
+          name: KeyOverlay ${{ needs.windows-installer.outputs.version }}
+          prerelease: false
+          make_latest: true
+          generate_release_notes: true
+          files: dist/*
+          body: |
+            ## Download
+
+            ### [⬇ Download KeyOverlay-${{ needs.windows-installer.outputs.version }}-Windows-x64.zip](https://github.com/${{ github.repository }}/releases/download/${{ github.ref_name }}/KeyOverlay-${{ needs.windows-installer.outputs.version }}-Windows-x64.zip)
+
+            The zip contains:
+            - **KeyOverlay-Setup-${{ needs.windows-installer.outputs.version }}-x64.exe** — the installer. Adds KeyOverlay to the Start menu and registers an uninstaller in *Settings → Apps*.
+            - **INSTALL.txt** — step-by-step install, update and uninstall instructions.
+            - **LICENSE.txt** — the MIT License.
+
+            **To install:** right-click the zip → *Extract All…*, then double-click the Setup `.exe`. Requires Windows 10 or 11 (64-bit). The installer is not code-signed yet, so Windows SmartScreen may show "Windows protected your PC" — click **More info → Run anyway**.

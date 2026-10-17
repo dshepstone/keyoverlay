@@ -440,7 +440,7 @@ fn begin_card(ui: &mut egui::Ui, title: &str) {
 fn card_frame(ui: &mut egui::Ui, add_contents: impl FnOnce(&mut egui::Ui)) {
     egui::Frame::none()
         .fill(CARD_BG)
-        .stroke(egui::Stroke::new(1.0, CARD_BORDER))
+        .stroke(egui::Stroke::new(1.0_f32, CARD_BORDER))
         .rounding(egui::Rounding::same(CARD_ROUNDING))
         .inner_margin(egui::Margin::same(CARD_PADDING))
         .show(ui, |ui| {
@@ -657,7 +657,7 @@ fn tab_general(app: &mut App, ui: &mut egui::Ui) {
                 .size(13.0),
         )
         .fill(CARD_BG)
-        .stroke(egui::Stroke::new(1.0, CARD_BORDER))
+        .stroke(egui::Stroke::new(1.0_f32, CARD_BORDER))
         .rounding(egui::Rounding::same(8.0))
         .min_size(egui::vec2(110.0, 32.0));
         let reset_resp = ui.push_id(reset_id, |ui| ui.add(reset_btn)).inner;
@@ -776,7 +776,7 @@ fn tab_cursor(app: &mut App, ui: &mut egui::Ui) {
                         ui.painter().circle_stroke(
                             rect.center(),
                             22.0,
-                            egui::Stroke::new(2.5, ACCENT),
+                            egui::Stroke::new(2.5_f32, ACCENT),
                         );
                     }
 
@@ -802,7 +802,7 @@ fn tab_cursor(app: &mut App, ui: &mut egui::Ui) {
                         ui.painter().circle_stroke(
                             rect.center(),
                             22.0,
-                            egui::Stroke::new(1.5, SIDEBAR_TEXT),
+                            egui::Stroke::new(1.5_f32, SIDEBAR_TEXT),
                         );
                     }
                 }
@@ -1127,7 +1127,7 @@ fn tab_position(app: &mut App, ui: &mut egui::Ui) {
                     .size(12.0),
             )
             .fill(CARD_BG)
-            .stroke(egui::Stroke::new(1.0, CARD_BORDER))
+            .stroke(egui::Stroke::new(1.0_f32, CARD_BORDER))
             .rounding(egui::Rounding::same(8.0));
             let snap_resp = ui.push_id(snap_id, |ui| ui.add(snap_btn)).inner;
             if command_activated_on_press(ui, snap_id, &snap_resp) {

@@ -6,20 +6,12 @@ on:
   pull_request:
 
 jobs:
+  # KeyOverlay is a Windows 10/11 app, so CI checks the Windows build only.
   build:
-    strategy:
-      matrix:
-        os: [windows-latest, ubuntu-latest, macos-latest]
-    runs-on: ${{ matrix.os }}
+    runs-on: windows-latest
     steps:
       - name: Checkout
         uses: actions/checkout@v4
-
-      - name: Install Linux dependencies
-        if: runner.os == 'Linux'
-        run: |
-          sudo apt-get update
-          sudo apt-get install -y libx11-dev libxtst-dev libevdev-dev libxdo-dev
 
       - name: Setup Rust
         uses: dtolnay/rust-toolchain@stable
