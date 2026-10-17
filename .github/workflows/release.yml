@@ -2,7 +2,7 @@ name: Release
 
 # Builds the Windows installer.
 # - Pushing a tag like `v0.3.0` builds it and publishes a GitHub Release
-#   with the installer, the portable .exe, and SHA-256 checksums.
+#   with a zip (installer + INSTALL.txt + LICENSE.txt) and SHA-256 checksums.
 # - Running the workflow manually (Actions tab -> Release -> Run workflow)
 #   builds the installer as a downloadable workflow artifact only.
 # - Pull requests that touch the installer build it too, as a check.
@@ -68,17 +68,27 @@ jobs:
           & "${env:ProgramFiles(x86)}\Inno Setup 6\ISCC.exe" "/DAppVersion=${{ steps.version.outputs.version }}" installer\keyoverlay.iss
           if ($LASTEXITCODE -ne 0) { throw "ISCC failed with exit code $LASTEXITCODE" }
 
-      - name: Collect release files
+      - name: Package release zip
         shell: pwsh
         run: |
           $v = "${{ steps.version.outputs.version }}"
-          New-Item -ItemType Directory -Force dist | Out-Null
-          Copy-Item "target\installer\KeyOverlay-Setup-$v-x64.exe" dist\
-          Copy-Item target\release\keyoverlay-app.exe "dist\KeyOverlay-$v-x64-portable.exe"
-          Get-ChildItem dist\*.exe | ForEach-Object {
+          $name = "KeyOverlay-$v-Windows-x64"
+          $pkg = "package\$name"
+          New-Item -ItemType Directory -Force $pkg, dist | Out-Null
+          Copy-Item "target\installer\KeyOverlay-Setup-$v-x64.exe" $pkg\
+          Copy-Item installer\INSTALL.txt $pkg\
+          Copy-Item LICENSE "$pkg\LICENSE.txt"
+          # Notepad-friendly line endings for the text files.
+          Get-ChildItem $pkg\*.txt | ForEach-Object {
+            $t = [IO.File]::ReadAllText($_.FullName) -replace "`r?`n", "`r`n"
+            [IO.File]::WriteAllText($_.FullName, $t)
+          }
+          Compress-Archive -Path $pkg -DestinationPath "dist\$name.zip"
+          Get-ChildItem dist\*.zip | ForEach-Object {
             "$((Get-FileHash $_.FullName -Algorithm SHA256).Hash.ToLower())  $($_.Name)"
           } | Set-Content -Encoding ascii dist\SHA256SUMS.txt
           Get-Content dist\SHA256SUMS.txt
+          Get-ChildItem -Recurse package | Select-Object FullName, Length
 
       - name: Upload workflow artifact
         uses: actions/upload-artifact@v4
@@ -110,9 +120,11 @@ jobs:
           body: |
             ## Download
 
-            ### [⬇ Download the installer: KeyOverlay-Setup-${{ needs.windows-installer.outputs.version }}-x64.exe](https://github.com/${{ github.repository }}/releases/download/${{ github.ref_name }}/KeyOverlay-Setup-${{ needs.windows-installer.outputs.version }}-x64.exe)
+            ### [⬇ Download KeyOverlay-${{ needs.windows-installer.outputs.version }}-Windows-x64.zip](https://github.com/${{ github.repository }}/releases/download/${{ github.ref_name }}/KeyOverlay-${{ needs.windows-installer.outputs.version }}-Windows-x64.zip)
 
-            - **KeyOverlay-Setup-${{ needs.windows-installer.outputs.version }}-x64.exe** — recommended. Installs KeyOverlay, adds it to the Start menu, and registers an uninstaller in *Settings → Apps*.
-            - **KeyOverlay-${{ needs.windows-installer.outputs.version }}-x64-portable.exe** — no install; run it from any folder.
+            The zip contains:
+            - **KeyOverlay-Setup-${{ needs.windows-installer.outputs.version }}-x64.exe** — the installer. Adds KeyOverlay to the Start menu and registers an uninstaller in *Settings → Apps*.
+            - **INSTALL.txt** — step-by-step install, update and uninstall instructions.
+            - **LICENSE.txt** — the MIT License.
 
-            Requires Windows 10 or 11 (64-bit). The installer is not code-signed yet, so Windows SmartScreen may show "Windows protected your PC" — click **More info → Run anyway**.
+            **To install:** right-click the zip → *Extract All…*, then double-click the Setup `.exe`. Requires Windows 10 or 11 (64-bit). The installer is not code-signed yet, so Windows SmartScreen may show "Windows protected your PC" — click **More info → Run anyway**.

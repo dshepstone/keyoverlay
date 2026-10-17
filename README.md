@@ -32,21 +32,23 @@ crates/
 
 ## Install (Windows 10/11)
 
-**[⬇ Download KeyOverlay-Setup-0.3.0-x64.exe](https://github.com/dshepstone/keyoverlay/releases/download/v0.3.0/KeyOverlay-Setup-0.3.0-x64.exe)** and run it, or pick any version from the
-[Releases page](https://github.com/dshepstone/keyoverlay/releases). (Releases up to
-v0.2.0 ship only the program itself, `KeyOverlay-v0.2.0-Windows-x64.exe`, which runs without
-installing.)
+**[⬇ Download KeyOverlay-0.3.0-Windows-x64.zip](https://github.com/dshepstone/keyoverlay/releases/download/v0.3.0/KeyOverlay-0.3.0-Windows-x64.zip)**, or pick any version from the
+[Releases page](https://github.com/dshepstone/keyoverlay/releases).
 
-The installer:
+1. Right-click the zip → **Extract All…**
+2. Double-click **`KeyOverlay-Setup-0.3.0-x64.exe`** and follow the wizard.
+
+The zip also contains **`INSTALL.txt`** (install, update and uninstall steps) and
+**`LICENSE.txt`**. The installer:
 
 - installs for the current user by default (no admin rights needed), or for all users if you choose;
 - adds **KeyOverlay** to the Start menu, with an uninstall shortcut;
 - can optionally add a desktop shortcut and start KeyOverlay when you sign in;
 - registers an uninstaller in **Settings → Apps → Installed apps**.
 
-A portable `KeyOverlay-<version>-x64-portable.exe` is attached to each release too, if you
-would rather not install anything. Releases are not code-signed yet, so SmartScreen may warn
-"Windows protected your PC" — click **More info → Run anyway**.
+Releases are not code-signed yet, so SmartScreen may warn "Windows protected your PC" — click
+**More info → Run anyway**. (Releases up to v0.2.0 ship only the program itself,
+`KeyOverlay-v0.2.0-Windows-x64.exe`, which runs without installing.)
 
 ## Build & run
 
@@ -80,8 +82,9 @@ iscc /DAppVersion=0.2.0 installer\keyoverlay.iss   # output: target\installer\
 2. Tag and push: `git tag v0.3.0 && git push origin v0.3.0`.
 
 The [Release workflow](.github/workflows/release.yml) checks the tag matches `Cargo.toml`, builds
-the app and installer on Windows, and publishes a GitHub Release with the installer, the
-portable `.exe`, and `SHA256SUMS.txt`.
+the app and installer on Windows, and publishes a GitHub Release with
+`KeyOverlay-<version>-Windows-x64.zip` (installer, `INSTALL.txt`, `LICENSE.txt`) and
+`SHA256SUMS.txt`. The install guide lives in [`installer/INSTALL.txt`](installer/INSTALL.txt).
 
 ## Contributing
 

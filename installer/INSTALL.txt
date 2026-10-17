@@ -1,0 +1,80 @@
+KeyOverlay - Installation Guide
+===============================
+
+KeyOverlay shows your keystrokes and highlights your cursor on screen, for
+demos, training videos and screen recordings. It is free, open-source
+software released under the MIT License (see LICENSE.txt).
+
+Project home: https://github.com/dshepstone/keyoverlay
+
+
+REQUIREMENTS
+------------
+- Windows 10 or Windows 11, 64-bit
+- About 10 MB of disk space
+
+
+WHAT'S IN THIS ZIP
+------------------
+- KeyOverlay-Setup-<version>-x64.exe   The installer
+- INSTALL.txt                          This guide
+- LICENSE.txt                          The MIT License
+
+
+INSTALL
+-------
+1. Extract (unzip) this folder: right-click the zip file and choose
+   "Extract All...", then open the extracted folder.
+
+2. Double-click KeyOverlay-Setup-<version>-x64.exe.
+
+3. If Windows shows "Windows protected your PC" (SmartScreen), click
+   "More info", then "Run anyway". This appears because the installer is
+   not yet code-signed; it is the same open-source build published on
+   GitHub.
+
+4. Follow the setup wizard:
+   - Accept the license.
+   - Choose whether to install for just you (default, no administrator
+     rights needed) or for all users of the computer.
+   - Optionally tick "Create a desktop shortcut" and/or "Start KeyOverlay
+     automatically when I sign in to Windows".
+
+5. Click Finish. Leave "Launch KeyOverlay" ticked to start it right away.
+
+
+START KEYOVERLAY
+----------------
+Open the Start menu and choose KeyOverlay (or use the desktop shortcut if
+you created one). The settings window opens; it is the control panel for
+the overlay, cursor highlight and sounds.
+
+The Start menu also contains "KeyOverlay Website" and "Uninstall
+KeyOverlay".
+
+
+UPDATE
+------
+Download the newer release and run its installer. It replaces the old
+version in place and keeps your settings.
+
+
+UNINSTALL
+---------
+Either:
+- Start menu > KeyOverlay > Uninstall KeyOverlay, or
+- Settings > Apps > Installed apps > KeyOverlay > Uninstall.
+
+Your settings are kept in %APPDATA%\keyoverlay so a reinstall remembers
+them. To remove them too, delete that folder after uninstalling.
+
+
+TROUBLESHOOTING
+---------------
+- Installer won't start / blocked: see step 3 above. If your organization
+  blocks unsigned software, ask your IT department.
+- Nothing appears when typing: check the ON/OFF toggle in the settings
+  window, and that "Show keyboard strokes" is enabled on the Keystroke tab.
+- More help and the full how-to guide:
+  https://dshepstone.github.io/keyoverlay/how-to.html
+- Report a problem: https://github.com/dshepstone/keyoverlay/issues
