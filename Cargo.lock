@@ -1840,7 +1840,7 @@ dependencies = [
 
 [[package]]
 name = "keyoverlay-app"
-version = "0.2.0"
+version = "0.3.0"
 dependencies = [
  "anyhow",
  "eframe",
@@ -1853,7 +1853,7 @@ dependencies = [
 
 [[package]]
 name = "keyoverlay-core"
-version = "0.2.0"
+version = "0.3.0"
 dependencies = [
  "dirs",
  "serde",
@@ -1862,7 +1862,7 @@ dependencies = [
 
 [[package]]
 name = "keyoverlay-input"
-version = "0.2.0"
+version = "0.3.0"
 dependencies = [
  "bitflags 2.10.0",
  "rdev",
@@ -1871,7 +1871,7 @@ dependencies = [
 
 [[package]]
 name = "keyoverlay-overlay"
-version = "0.2.0"
+version = "0.3.0"
 dependencies = [
  "anyhow",
  "eframe",

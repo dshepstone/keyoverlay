@@ -110,6 +110,8 @@ jobs:
           body: |
             ## Download
 
+            ### [⬇ Download the installer: KeyOverlay-Setup-${{ needs.windows-installer.outputs.version }}-x64.exe](https://github.com/${{ github.repository }}/releases/download/${{ github.ref_name }}/KeyOverlay-Setup-${{ needs.windows-installer.outputs.version }}-x64.exe)
+
             - **KeyOverlay-Setup-${{ needs.windows-installer.outputs.version }}-x64.exe** — recommended. Installs KeyOverlay, adds it to the Start menu, and registers an uninstaller in *Settings → Apps*.
             - **KeyOverlay-${{ needs.windows-installer.outputs.version }}-x64-portable.exe** — no install; run it from any folder.
 
