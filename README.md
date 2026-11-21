@@ -32,11 +32,11 @@ crates/
 
 ## Install (Windows 10/11)
 
-**[⬇ Download KeyOverlay-0.3.0-Windows-x64.zip](https://github.com/dshepstone/keyoverlay/releases/download/v0.3.0/KeyOverlay-0.3.0-Windows-x64.zip)**, or pick any version from the
+**[⬇ Download KeyOverlay-0.4.0-Windows-x64.zip](https://github.com/dshepstone/keyoverlay/releases/download/v0.4.0/KeyOverlay-0.4.0-Windows-x64.zip)**, or pick any version from the
 [Releases page](https://github.com/dshepstone/keyoverlay/releases).
 
 1. Right-click the zip → **Extract All…**
-2. Double-click **`KeyOverlay-Setup-0.3.0-x64.exe`** and follow the wizard.
+2. Double-click **`KeyOverlay-Setup-0.4.0-x64.exe`** and follow the wizard.
 
 The zip also contains **`INSTALL.txt`** (install, update and uninstall steps) and
 **`LICENSE.txt`**. The installer:
@@ -78,8 +78,8 @@ iscc /DAppVersion=0.2.0 installer\keyoverlay.iss   # output: target\installer\
 
 ### Publishing a release
 
-1. Bump `version` under `[workspace.package]` in `Cargo.toml` (e.g. `0.3.0`) and commit.
-2. Tag and push: `git tag v0.3.0 && git push origin v0.3.0`.
+1. Bump `version` under `[workspace.package]` in `Cargo.toml` (e.g. `0.4.0`) and commit.
+2. Tag and push: `git tag v0.4.0 && git push origin v0.4.0`.
 
 The [Release workflow](.github/workflows/release.yml) checks the tag matches `Cargo.toml`, builds
 the app and installer on Windows, and publishes a GitHub Release with
