@@ -2053,7 +2053,15 @@ mod tests {
 
     fn pos_for(position: OverlayPosition, cfg: AppConfig) -> (i32, i32) {
         let mut app = test_app(cfg);
-        // Non-Windows test builds see a single 1920x1080 @ 100% monitor.
+        // Use a fixed 1920x1080 @ 100% monitor rather than whatever the
+        // machine running the tests has connected.
+        app.monitors = vec![monitors::MonitorInfo {
+            id: "test".into(),
+            number: 1,
+            primary: true,
+            geometry: MonitorGeometry::FALLBACK,
+        }];
+        app.active_monitor = 0;
         app.draft.position = position;
         app.compute_overlay_position([200, 100])
     }
