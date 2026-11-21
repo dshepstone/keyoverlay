@@ -42,14 +42,14 @@
     </div>
 
     <h2 id="install">1. Install or build</h2>
-    <p><a class="btn primary" href="https://github.com/dshepstone/keyoverlay/releases/download/v0.3.0/KeyOverlay-0.3.0-Windows-x64.zip">Download KeyOverlay-0.3.0-Windows-x64.zip</a></p>
+    <p><a class="btn primary" href="https://github.com/dshepstone/keyoverlay/releases/download/v0.4.0/KeyOverlay-0.4.0-Windows-x64.zip">Download KeyOverlay-0.4.0-Windows-x64.zip</a></p>
     <p>The easiest way to use KeyOverlay on Windows 10/11 is the installer, which comes in a zip
        together with an install guide (<code>INSTALL.txt</code>) and the license
        (<code>LICENSE.txt</code>). Download it above, or pick any version from the
        <a href="https://github.com/dshepstone/keyoverlay/releases">Releases page</a>.</p>
     <ol>
       <li>Right-click the zip and choose <strong>Extract All…</strong></li>
-      <li>Double-click <code>KeyOverlay-Setup-0.3.0-x64.exe</code> and follow the wizard.</li>
+      <li>Double-click <code>KeyOverlay-Setup-0.4.0-x64.exe</code> and follow the wizard.</li>
     </ol>
     <p>The installer:</p>
     <ul>
@@ -122,8 +122,9 @@ cargo build --release -p keyoverlay-app</code></pre>
       </tr>
       <tr>
         <td><strong>Position</strong></td>
-        <td>Display baseline (resolution and Windows display scale), position presets, layout
-            direction, manual X/Y sliders, margins, and overlay size.</td>
+        <td>Which monitor to use (with a clickable monitor map), display baseline (auto-detected
+            or manual), position presets, taskbar avoidance, layout direction, manual X/Y sliders,
+            margins, and overlay size.</td>
       </tr>
       <tr>
         <td><strong>License / About</strong></td>
@@ -136,18 +137,25 @@ cargo build --release -p keyoverlay-app</code></pre>
     <h2 id="position">5. Positioning the overlay</h2>
     <ol>
       <li>Open the <strong>Position</strong> tab.</li>
-      <li>Set the <strong>display baseline</strong> to match your monitor: pick your resolution
-          (e.g. 1920&nbsp;×&nbsp;1080) and your Windows display scaling (e.g. 125%). This lets the
-          presets land exactly where you expect on high-DPI screens.</li>
+      <li>In the <strong>Monitor</strong> card, choose where the overlay appears:
+          <em>Primary display</em>, <em>Follow mouse cursor</em>, or a specific display. You can
+          also click a screen on the monitor map. <em>Preview on display</em> briefly shows the
+          overlay where it will appear.</li>
+      <li>Leave <strong>Auto-detect resolution &amp; scale</strong> on so presets use the selected
+          monitor's real resolution and Windows scaling. Turn it off only if you want to set the
+          display baseline by hand.</li>
       <li>Choose a preset — any corner, top/bottom center, or screen center — and adjust the
-          horizontal and vertical margins to taste.</li>
+          horizontal and vertical margins to taste. <em>Keep clear of the taskbar</em> stops
+          bottom presets from sitting under the taskbar.</li>
       <li>For pixel-perfect placement, choose <strong>Manual (X/Y)</strong> and drag the X and Y
           sliders; the overlay moves live so you can see exactly where it lands. The
           <em>Snap to lower-right</em> button is a quick reset.</li>
     </ol>
     <div class="note">
-      <strong>Multiple monitors:</strong> manual coordinates may be negative, which is normal for a
-      monitor positioned to the left of (or above) your primary display.
+      <strong>Multiple monitors:</strong> displays are numbered left to right. Manual X/Y are
+      measured from the selected display's top-left corner, and the overlay is always kept on that
+      display. If the chosen display is unplugged, the overlay uses the primary display until it
+      comes back.
     </div>
 
     <h2 id="cursor">6. Cursor highlight &amp; click animation</h2>
@@ -189,8 +197,8 @@ cargo build --release -p keyoverlay-app</code></pre>
 
     <h2 id="recording">9. Tips for recordings</h2>
     <ul>
-      <li><strong>Match the baseline first.</strong> Set the Position tab's resolution and scale to
-          your recording monitor before fine-tuning placement.</li>
+      <li><strong>Pick the recording monitor first.</strong> Select the display you record on in
+          the Position tab's Monitor card before fine-tuning placement.</li>
       <li><strong>Bottom center</strong> works well for tutorials — viewers' eyes are usually on the
           upper two-thirds of the screen.</li>
       <li><strong>Bump the overlay scale</strong> (1.2–1.5×) if you record at 1080p but publish at
@@ -211,8 +219,9 @@ cargo build --release -p keyoverlay-app</code></pre>
       </tr>
       <tr>
         <td>Overlay is in the wrong place after changing monitors or scaling</td>
-        <td>Update the display baseline (resolution + scale) on the Position tab; presets are
-            computed from it.</td>
+        <td>Check the selected display in the Position tab's Monitor card and click
+            <em>Refresh displays</em>. If <em>Auto-detect resolution &amp; scale</em> is off,
+            update the manual baseline.</td>
       </tr>
       <tr>
         <td>Sounds don't play</td>
@@ -240,7 +249,7 @@ cargo build --release -p keyoverlay-app</code></pre>
 <footer>
   <div class="wrap">
     <p>
-      KeyOverlay v0.2.0 · MIT License ·
+      KeyOverlay v0.4.0 · MIT License ·
       <a href="https://github.com/dshepstone/keyoverlay">github.com/dshepstone/keyoverlay</a>
     </p>
     <p>Primary platform: Windows 10/11. The project also compiles on Linux and macOS for development.</p>

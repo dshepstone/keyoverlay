@@ -1,7 +1,7 @@
 use std::collections::HashSet;
 
 use eframe::egui;
-use keyoverlay_core::{CursorTheme, OverlayLayout, OverlayPosition, Theme};
+use keyoverlay_core::{CursorTheme, MonitorTarget, OverlayLayout, OverlayPosition, Theme};
 
 use crate::theme::{c2e, e2c};
 use crate::App;
@@ -40,6 +40,7 @@ const BODY_TEXT: egui::Color32 = egui::Color32::from_rgb(180, 180, 200);
 const MUTED_TEXT: egui::Color32 = egui::Color32::from_rgb(120, 120, 150);
 const ACCENT: egui::Color32 = egui::Color32::from_rgb(100, 120, 255);
 const SUCCESS: egui::Color32 = egui::Color32::from_rgb(80, 200, 120);
+const WARNING: egui::Color32 = egui::Color32::from_rgb(240, 180, 80);
 
 const TOGGLE_ON_BG: egui::Color32 = egui::Color32::from_rgb(80, 200, 120);
 const TOGGLE_OFF_BG: egui::Color32 = egui::Color32::from_rgb(70, 70, 90);
@@ -946,13 +947,269 @@ fn tab_sounds(app: &mut App, ui: &mut egui::Ui) {
 
 // ── Tab: Position ───────────────────────────────────────────────────────
 
+/// Small button styled like the other card buttons.
+fn card_button(ui: &mut egui::Ui, text: &str) -> egui::Response {
+    ui.add(
+        egui::Button::new(egui::RichText::new(text).color(BODY_TEXT).size(12.0))
+            .fill(CARD_BG)
+            .stroke(egui::Stroke::new(1.0_f32, CARD_BORDER))
+            .rounding(egui::Rounding::same(8.0)),
+    )
+}
+
+fn monitor_target_label(app: &App, target: &MonitorTarget) -> String {
+    match target {
+        MonitorTarget::Primary => "Primary display".to_string(),
+        MonitorTarget::FollowCursor => "Follow mouse cursor".to_string(),
+        MonitorTarget::Display(id) => app
+            .monitors()
+            .iter()
+            .find(|m| &m.id == id)
+            .map(|m| m.label())
+            .unwrap_or_else(|| "Disconnected display".to_string()),
+    }
+}
+
+/// Draw the monitor arrangement as a clickable mini-map. Returns the index
+/// of a monitor the user clicked.
+fn monitor_map(ui: &mut egui::Ui, app: &App) -> Option<usize> {
+    let mons = app.monitors();
+    let (mut min_x, mut min_y, mut max_x, mut max_y) = (i32::MAX, i32::MAX, i32::MIN, i32::MIN);
+    for m in mons {
+        let b = m.geometry.bounds;
+        min_x = min_x.min(b.x);
+        min_y = min_y.min(b.y);
+        max_x = max_x.max(b.right());
+        max_y = max_y.max(b.bottom());
+    }
+    let span_w = (max_x - min_x).max(1) as f32;
+    let span_h = (max_y - min_y).max(1) as f32;
+    let avail_w = ui.available_width().max(120.0);
+    let max_h = 120.0;
+    let k = (avail_w / span_w).min(max_h / span_h);
+    let size = egui::vec2(span_w * k, span_h * k);
+    let (outer, _) = ui.allocate_exact_size(egui::vec2(avail_w, size.y), egui::Sense::hover());
+    let origin = egui::pos2(outer.center().x - size.x / 2.0, outer.top());
+    let to_screen = |x: i32, y: i32| {
+        egui::pos2(
+            origin.x + (x - min_x) as f32 * k,
+            origin.y + (y - min_y) as f32 * k,
+        )
+    };
+
+    let mut clicked = None;
+    for (i, m) in mons.iter().enumerate() {
+        let b = m.geometry.bounds;
+        let rect = egui::Rect::from_min_max(to_screen(b.x, b.y), to_screen(b.right(), b.bottom()))
+            .shrink(2.0);
+        let resp = ui.interact(rect, ui.id().with(("monitor_map", i)), egui::Sense::click());
+        let active = i == app.active_monitor;
+        let fill = if active {
+            egui::Color32::from_rgb(52, 62, 120)
+        } else if resp.hovered() {
+            egui::Color32::from_rgb(56, 56, 76)
+        } else {
+            egui::Color32::from_rgb(44, 44, 60)
+        };
+        let stroke = if active {
+            egui::Stroke::new(2.0_f32, ACCENT)
+        } else {
+            egui::Stroke::new(1.0_f32, CARD_BORDER)
+        };
+        let painter = ui.painter();
+        painter.rect(rect, egui::Rounding::same(4.0), fill, stroke);
+        // Taskbar strip (work-area difference).
+        let w = m.geometry.work;
+        if w != b {
+            let work_rect =
+                egui::Rect::from_min_max(to_screen(w.x, w.y), to_screen(w.right(), w.bottom()))
+                    .shrink(2.0);
+            for strip in [
+                egui::Rect::from_min_max(egui::pos2(rect.left(), work_rect.bottom()), rect.max),
+                egui::Rect::from_min_max(rect.min, egui::pos2(rect.right(), work_rect.top())),
+            ] {
+                if strip.height() > 0.5 {
+                    painter.rect_filled(strip, egui::Rounding::ZERO, CARD_BORDER);
+                }
+            }
+        }
+        let text_color = if active {
+            egui::Color32::WHITE
+        } else {
+            BODY_TEXT
+        };
+        let number_offset = if m.primary { -7.0 } else { 0.0 };
+        painter.text(
+            rect.center() + egui::vec2(0.0, number_offset),
+            egui::Align2::CENTER_CENTER,
+            m.number.to_string(),
+            egui::FontId::proportional(14.0),
+            text_color,
+        );
+        if m.primary {
+            painter.text(
+                rect.center() + egui::vec2(0.0, 9.0),
+                egui::Align2::CENTER_CENTER,
+                "Primary",
+                egui::FontId::proportional(10.0),
+                text_color,
+            );
+        }
+        if active {
+            // Approximate overlay footprint on the selected monitor.
+            let win_px = [
+                (app.draft.overlay_width * m.geometry.scale) as i32,
+                (60.0 * m.geometry.scale) as i32,
+            ];
+            let (ox, oy) = app.draft.overlay_origin_px(&m.geometry, win_px);
+            let r = egui::Rect::from_min_max(
+                to_screen(ox, oy),
+                to_screen(ox + win_px[0], oy + win_px[1]),
+            )
+            .intersect(rect);
+            painter.rect_filled(r, egui::Rounding::same(2.0), SUCCESS);
+        }
+        let resp = resp.on_hover_text(m.label());
+        if resp.clicked() {
+            clicked = Some(i);
+        }
+    }
+    clicked
+}
+
 fn tab_position(app: &mut App, ui: &mut egui::Ui) {
     let mut resolution_changed = false;
     let mut scale_changed = false;
     let mut position_dirty = false;
+    let mut monitor_changed = false;
 
+    begin_card(ui, "Monitor");
+    card_frame(ui, |ui| {
+        ui.horizontal(|ui| {
+            ui.label(
+                egui::RichText::new("Show overlay on")
+                    .color(BODY_TEXT)
+                    .size(13.0),
+            );
+            ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                let mut selected = app.draft.monitor.clone();
+                let mut options = vec![MonitorTarget::Primary, MonitorTarget::FollowCursor];
+                options.extend(
+                    app.monitors()
+                        .iter()
+                        .map(|m| MonitorTarget::Display(m.id.clone())),
+                );
+                if !options.contains(&selected) {
+                    options.push(selected.clone());
+                }
+                egui::ComboBox::from_id_source("monitor_combo")
+                    .width(260.0)
+                    .selected_text(monitor_target_label(app, &selected))
+                    .show_ui(ui, |ui| {
+                        for opt in &options {
+                            let label = monitor_target_label(app, opt);
+                            ui.selectable_value(&mut selected, opt.clone(), label);
+                        }
+                    });
+                if selected != app.draft.monitor {
+                    app.draft.monitor = selected;
+                    monitor_changed = true;
+                }
+            });
+        });
+
+        ui.add_space(8.0);
+        if let Some(i) = monitor_map(ui, app) {
+            let id = app.monitors()[i].id.clone();
+            let target = MonitorTarget::Display(id);
+            if app.draft.monitor != target {
+                app.draft.monitor = target;
+                monitor_changed = true;
+            }
+        }
+        ui.add_space(6.0);
+
+        let count = app.monitors().len();
+        let active = app.active_monitor_info().label();
+        let status = if app.monitor_fell_back {
+            egui::RichText::new(
+                "The selected display is not connected \u{2014} using the primary display until it returns.",
+            )
+            .size(11.0)
+            .color(WARNING)
+        } else {
+            let detail = match app.draft.monitor {
+                MonitorTarget::FollowCursor => format!(
+                    "{count} display(s) detected. The overlay appears on the display under the mouse (now: {active})."
+                ),
+                _ => format!("{count} display(s) detected. Overlay on: {active}"),
+            };
+            egui::RichText::new(detail).size(11.0).color(MUTED_TEXT)
+        };
+        ui.label(status);
+        ui.add_space(4.0);
+        ui.horizontal(|ui| {
+            if card_button(ui, "Preview on display")
+                .on_hover_text("Briefly show the overlay where it will appear")
+                .clicked()
+            {
+                app.preview_manual_position();
+            }
+            if card_button(ui, "Refresh displays").clicked() {
+                app.refresh_monitors(std::time::Instant::now(), true);
+                app.resolve_active_monitor();
+            }
+        });
+    });
+
+    if monitor_changed {
+        app.resolve_active_monitor();
+        // Keep manual offsets on the new monitor.
+        let [mw, mh] = app
+            .draft
+            .monitor_size_points(&app.active_monitor_geometry());
+        app.draft.overlay_x = app.draft.overlay_x.clamp(0.0, mw);
+        app.draft.overlay_y = app.draft.overlay_y.clamp(0.0, mh);
+        app.preview_manual_position();
+        position_dirty = true;
+    }
+
+    ui.add_space(12.0);
     begin_card(ui, "Display Baseline");
     card_frame(ui, |ui| {
+        if toggle_row(
+            ui,
+            "auto_display_baseline",
+            "Auto-detect resolution & scale",
+            &mut app.draft.auto_display_baseline,
+        ) {
+            position_dirty = true;
+            if app.draft.position == OverlayPosition::Manual {
+                app.sync_manual_to_lower_right();
+            }
+            app.preview_manual_position();
+        }
+        if app.draft.auto_display_baseline {
+            let g = app.active_monitor_geometry();
+            ui.add_space(4.0);
+            ui.horizontal(|ui| {
+                ui.label(egui::RichText::new("Detected").color(BODY_TEXT).size(13.0));
+                ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                    ui.label(
+                        egui::RichText::new(format!(
+                            "{} \u{00d7} {} @ {}%",
+                            g.bounds.w,
+                            g.bounds.h,
+                            (g.scale * 100.0).round() as i32
+                        ))
+                        .color(HEADING_TEXT)
+                        .size(13.0),
+                    );
+                });
+            });
+            return;
+        }
+        ui.add_space(4.0);
         ui.horizontal(|ui| {
             ui.label(
                 egui::RichText::new("Display resolution")
@@ -1013,6 +1270,14 @@ fn tab_position(app: &mut App, ui: &mut egui::Ui) {
                     });
             });
         });
+        ui.add_space(4.0);
+        ui.label(
+            egui::RichText::new(
+                "Manual baseline overrides the detected values for the selected display.",
+            )
+            .size(11.0)
+            .color(MUTED_TEXT),
+        );
     });
 
     if (resolution_changed || scale_changed) && app.draft.position == OverlayPosition::Manual {
@@ -1044,8 +1309,8 @@ fn tab_position(app: &mut App, ui: &mut egui::Ui) {
                     position_dirty = true;
                     if app.draft.position == OverlayPosition::Manual {
                         app.sync_manual_to_lower_right();
-                        app.preview_manual_position();
                     }
+                    app.preview_manual_position();
                 }
             });
         });
@@ -1064,12 +1329,24 @@ fn tab_position(app: &mut App, ui: &mut egui::Ui) {
                 }
             });
         });
+        ui.add_space(4.0);
+        if toggle_row(
+            ui,
+            "avoid_taskbar",
+            "Keep clear of the taskbar",
+            &mut app.draft.avoid_taskbar,
+        ) {
+            position_dirty = true;
+            app.preview_manual_position();
+        }
     });
 
     ui.add_space(12.0);
     begin_card(ui, "Manual Position (X / Y)");
     card_frame(ui, |ui| {
-        let [display_w, display_h] = app.draft.scaled_display_size_points();
+        let [display_w, display_h] = app
+            .draft
+            .monitor_size_points(&app.active_monitor_geometry());
         let mut manual_slider_changed = false;
         let mut dragging_now = false;
 
@@ -1114,7 +1391,9 @@ fn tab_position(app: &mut App, ui: &mut egui::Ui) {
         if app.draft.position != OverlayPosition::Manual {
             ui.add_space(4.0);
             ui.label(
-                egui::RichText::new("Select \"Manual (X/Y)\" above to use these sliders.")
+                egui::RichText::new(
+                    "Select \"Manual (X/Y)\" above to use these sliders. X/Y are measured from the selected display's top-left corner.",
+                )
                     .size(11.0)
                     .color(MUTED_TEXT),
             );
@@ -1141,6 +1420,7 @@ fn tab_position(app: &mut App, ui: &mut egui::Ui) {
     ui.add_space(12.0);
     begin_card(ui, "Margins & Size");
     card_frame(ui, |ui| {
+        let margins_before = (app.draft.margin_x, app.draft.margin_y);
         position_dirty |= slider_row(
             ui,
             "Horizontal margin",
@@ -1156,6 +1436,9 @@ fn tab_position(app: &mut App, ui: &mut egui::Ui) {
             0.0..=200.0,
             " px",
         );
+        if margins_before != (app.draft.margin_x, app.draft.margin_y) {
+            app.preview_manual_position();
+        }
         ui.add_space(6.0);
         position_dirty |= slider_row(
             ui,

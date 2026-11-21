@@ -65,6 +65,99 @@ impl OverlayPosition {
     }
 }
 
+// ── Monitor targeting ────────────────────────────────────────────────────
+
+/// Which monitor the overlay is placed on.
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
+pub enum MonitorTarget {
+    /// The Windows primary display.
+    #[default]
+    Primary,
+    /// Whichever display the mouse cursor is on when the overlay appears.
+    FollowCursor,
+    /// A specific display, identified by its Windows device name
+    /// (e.g. `\\.\DISPLAY2`). Falls back to the primary display when that
+    /// monitor is not connected.
+    Display(String),
+}
+
+/// A rectangle in physical (device) pixels on the virtual desktop. The
+/// primary monitor's top-left corner is (0, 0); monitors to the left of or
+/// above it have negative coordinates.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+pub struct PxRect {
+    pub x: i32,
+    pub y: i32,
+    pub w: i32,
+    pub h: i32,
+}
+
+impl PxRect {
+    pub const fn new(x: i32, y: i32, w: i32, h: i32) -> Self {
+        Self { x, y, w, h }
+    }
+
+    pub fn right(&self) -> i32 {
+        self.x + self.w
+    }
+
+    pub fn bottom(&self) -> i32 {
+        self.y + self.h
+    }
+
+    pub fn contains(&self, px: i32, py: i32) -> bool {
+        px >= self.x && px < self.right() && py >= self.y && py < self.bottom()
+    }
+
+    /// Move a `w`×`h` box at (`x`, `y`) the minimum distance needed to keep it
+    /// inside this rectangle. Boxes larger than the rectangle are pinned to
+    /// its top/left edge.
+    pub fn clamp_box(&self, x: i32, y: i32, w: i32, h: i32) -> (i32, i32) {
+        let max_x = (self.right() - w).max(self.x);
+        let max_y = (self.bottom() - h).max(self.y);
+        (x.clamp(self.x, max_x), y.clamp(self.y, max_y))
+    }
+}
+
+/// Geometry of one physical monitor, as reported by the OS.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct MonitorGeometry {
+    /// Full monitor rectangle (physical pixels).
+    pub bounds: PxRect,
+    /// Work area: the monitor minus the taskbar and docked app bars.
+    pub work: PxRect,
+    /// Effective DPI scale (1.0 = 100 %, 1.25 = 125 %, ...).
+    pub scale: f32,
+}
+
+impl MonitorGeometry {
+    /// A single 1920×1080 @ 100 % monitor at the origin; used when the OS
+    /// reports no monitors (and on non-Windows builds).
+    pub const FALLBACK: MonitorGeometry = MonitorGeometry {
+        bounds: PxRect::new(0, 0, 1920, 1080),
+        work: PxRect::new(0, 0, 1920, 1080),
+        scale: 1.0,
+    };
+}
+
+/// The region the overlay is positioned within, after applying the user's
+/// display-baseline and taskbar settings to a monitor.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct PlacementArea {
+    /// Whole-monitor rectangle; manual X/Y offsets are measured from its
+    /// top-left corner and the overlay is always kept inside it.
+    pub bounds: PxRect,
+    /// Rectangle the preset anchors (corners/edges/center) align to.
+    pub anchor: PxRect,
+    /// Scale used to turn settings expressed in points (margins, manual
+    /// offsets) into physical pixels.
+    pub scale: f32,
+}
+
+fn default_true() -> bool {
+    true
+}
+
 fn default_show_mouse_event_text() -> bool {
     true
 }
@@ -352,12 +445,33 @@ pub struct AppConfig {
     #[serde(default = "default_display_scale")]
     pub display_scale: f32,
 
-    // Manual pixel position (used when position == Manual).
+    // Manual pixel position (used when position == Manual). Offsets are
+    // in points from the top-left corner of the target monitor.
     #[serde(default = "default_overlay_x")]
     pub overlay_x: f32,
     #[serde(default = "default_overlay_y")]
     pub overlay_y: f32,
+
+    // ── Multi-monitor ──
+    /// Monitor the overlay is shown on.
+    #[serde(default)]
+    pub monitor: MonitorTarget,
+    /// Use the selected monitor's real resolution and scaling instead of the
+    /// manual "Display Baseline" values.
+    #[serde(default = "default_true")]
+    pub auto_display_baseline: bool,
+    /// Align preset positions to the work area so the overlay never sits
+    /// under the taskbar.
+    #[serde(default = "default_true")]
+    pub avoid_taskbar: bool,
+    /// Schema marker for position settings. 0 = written before multi-monitor
+    /// support, when manual X/Y were relative to the primary monitor.
+    #[serde(default)]
+    pub position_version: u32,
 }
+
+/// Current value of [`AppConfig::position_version`].
+pub const POSITION_VERSION: u32 = 1;
 
 impl Default for AppConfig {
     fn default() -> Self {
@@ -413,6 +527,10 @@ impl Default for AppConfig {
             display_scale: 1.25,
             overlay_x: 1216.0,
             overlay_y: 604.0,
+            monitor: MonitorTarget::Primary,
+            auto_display_baseline: true,
+            avoid_taskbar: true,
+            position_version: POSITION_VERSION,
         }
     }
 }
@@ -431,6 +549,102 @@ impl AppConfig {
         (
             (sw - self.overlay_width - self.margin_x).max(0.0),
             (sh - self.overlay_height - self.margin_y).max(0.0),
+        )
+    }
+
+    /// Apply the display-baseline and taskbar settings to `mon`.
+    ///
+    /// With `auto_display_baseline` the monitor's real size and DPI scale are
+    /// used. Otherwise the manual baseline resolution/scale override them
+    /// (anchored at the monitor's top-left corner), keeping the taskbar insets
+    /// the OS reports for that monitor.
+    pub fn placement_area(&self, mon: &MonitorGeometry) -> PlacementArea {
+        let (bounds, scale) = if self.auto_display_baseline {
+            (mon.bounds, mon.scale.max(0.5))
+        } else {
+            (
+                PxRect::new(
+                    mon.bounds.x,
+                    mon.bounds.y,
+                    self.display_width_px.round().max(1.0) as i32,
+                    self.display_height_px.round().max(1.0) as i32,
+                ),
+                self.display_scale.max(0.5),
+            )
+        };
+        let anchor = if self.avoid_taskbar {
+            let left = (mon.work.x - mon.bounds.x).max(0);
+            let top = (mon.work.y - mon.bounds.y).max(0);
+            let right = (mon.bounds.right() - mon.work.right()).max(0);
+            let bottom = (mon.bounds.bottom() - mon.work.bottom()).max(0);
+            PxRect::new(
+                bounds.x + left,
+                bounds.y + top,
+                (bounds.w - left - right).max(1),
+                (bounds.h - top - bottom).max(1),
+            )
+        } else {
+            bounds
+        };
+        PlacementArea {
+            bounds,
+            anchor,
+            scale,
+        }
+    }
+
+    /// Size of `mon` in points (the units of the manual X/Y sliders).
+    pub fn monitor_size_points(&self, mon: &MonitorGeometry) -> [f32; 2] {
+        let area = self.placement_area(mon);
+        [
+            (area.bounds.w as f32 / area.scale).max(1.0),
+            (area.bounds.h as f32 / area.scale).max(1.0),
+        ]
+    }
+
+    /// Top-left corner, in physical virtual-desktop pixels, for an overlay
+    /// window of `win_px` physical pixels placed on `mon`. The result always
+    /// keeps the overlay fully on that monitor.
+    pub fn overlay_origin_px(&self, mon: &MonitorGeometry, win_px: [i32; 2]) -> (i32, i32) {
+        let area = self.placement_area(mon);
+        let [w, h] = [win_px[0].max(1), win_px[1].max(1)];
+        let a = area.anchor;
+        let mx = (self.margin_x * area.scale).round() as i32;
+        let my = (self.margin_y * area.scale).round() as i32;
+        let cx = a.x + (a.w - w) / 2;
+        let cy = a.y + (a.h - h) / 2;
+        let left = a.x + mx;
+        let right = a.right() - w - mx;
+        let top = a.y + my;
+        let bottom = a.bottom() - h - my;
+
+        let (x, y) = match self.position {
+            OverlayPosition::BottomCenter => (cx, bottom),
+            OverlayPosition::BottomLeft => (left, bottom),
+            OverlayPosition::BottomRight => (right, bottom),
+            OverlayPosition::TopCenter => (cx, top),
+            OverlayPosition::TopLeft => (left, top),
+            OverlayPosition::TopRight => (right, top),
+            OverlayPosition::Center => (cx, cy),
+            OverlayPosition::Manual => (
+                area.bounds.x + (self.overlay_x * area.scale).round() as i32,
+                area.bounds.y + (self.overlay_y * area.scale).round() as i32,
+            ),
+        };
+        area.bounds.clamp_box(x, y, w, h)
+    }
+
+    /// Manual X/Y (points, relative to `mon`) that put an
+    /// `overlay_width`×`overlay_height` box in the lower-right corner,
+    /// respecting margins and the taskbar setting.
+    pub fn manual_lower_right_on(&self, mon: &MonitorGeometry) -> (f32, f32) {
+        let area = self.placement_area(mon);
+        let s = area.scale;
+        let right = (area.anchor.right() - area.bounds.x) as f32 / s;
+        let bottom = (area.anchor.bottom() - area.bounds.y) as f32 / s;
+        (
+            (right - self.overlay_width - self.margin_x).max(0.0),
+            (bottom - self.overlay_height - self.margin_y).max(0.0),
         )
     }
 
@@ -620,8 +834,10 @@ mod tests {
         // show_mouse_event_text has a deliberate migration default of `true`
         // (configs from versions that always showed the text keep doing so),
         // which differs from the `false` used for fresh installs.
+        // position_version 0 marks pre-multi-monitor configs for migration.
         let expected = AppConfig {
             show_mouse_event_text: true,
+            position_version: 0,
             ..AppConfig::default()
         };
         assert_eq!(restored, expected);
@@ -739,6 +955,164 @@ mod tests {
         let (x, y) = config.manual_lower_right_position();
         assert!((x - 1600.0).abs() < 0.01);
         assert!((y - 820.0).abs() < 0.01);
+    }
+
+    fn mon(x: i32, y: i32, w: i32, h: i32, taskbar: i32, scale: f32) -> MonitorGeometry {
+        MonitorGeometry {
+            bounds: PxRect::new(x, y, w, h),
+            work: PxRect::new(x, y, w, h - taskbar),
+            scale,
+        }
+    }
+
+    fn placement_config(position: OverlayPosition) -> AppConfig {
+        AppConfig {
+            position,
+            margin_x: 40.0,
+            margin_y: 60.0,
+            auto_display_baseline: true,
+            avoid_taskbar: false,
+            ..AppConfig::default()
+        }
+    }
+
+    #[test]
+    fn presets_on_primary_at_100_percent() {
+        let m = mon(0, 0, 1920, 1080, 48, 1.0);
+        let win = [200, 100];
+        let cases = [
+            (OverlayPosition::TopLeft, (40, 60)),
+            (OverlayPosition::TopRight, (1680, 60)),
+            (OverlayPosition::TopCenter, (860, 60)),
+            (OverlayPosition::BottomLeft, (40, 920)),
+            (OverlayPosition::BottomRight, (1680, 920)),
+            (OverlayPosition::BottomCenter, (860, 920)),
+            (OverlayPosition::Center, (860, 490)),
+        ];
+        for (pos, expected) in cases {
+            assert_eq!(
+                placement_config(pos).overlay_origin_px(&m, win),
+                expected,
+                "{pos:?}"
+            );
+        }
+    }
+
+    #[test]
+    fn presets_on_secondary_monitor_use_its_origin_and_scale() {
+        // 2560x1440 @ 150% to the right of a 1920-wide primary.
+        let m = mon(1920, -200, 2560, 1440, 0, 1.5);
+        let cfg = placement_config(OverlayPosition::TopRight);
+        // margins: 40pt * 1.5 = 60px, 60pt * 1.5 = 90px
+        assert_eq!(
+            cfg.overlay_origin_px(&m, [300, 150]),
+            (1920 + 2560 - 300 - 60, -200 + 90)
+        );
+        let cfg = placement_config(OverlayPosition::BottomLeft);
+        assert_eq!(
+            cfg.overlay_origin_px(&m, [300, 150]),
+            (1920 + 60, -200 + 1440 - 150 - 90)
+        );
+    }
+
+    #[test]
+    fn monitor_left_of_primary_has_negative_origin() {
+        let m = mon(-1280, 0, 1280, 1024, 0, 1.0);
+        let cfg = placement_config(OverlayPosition::TopLeft);
+        assert_eq!(cfg.overlay_origin_px(&m, [200, 100]), (-1240, 60));
+    }
+
+    #[test]
+    fn avoid_taskbar_uses_work_area_for_bottom_presets() {
+        let m = mon(0, 0, 1920, 1080, 48, 1.0);
+        let mut cfg = placement_config(OverlayPosition::BottomRight);
+        cfg.avoid_taskbar = true;
+        assert_eq!(
+            cfg.overlay_origin_px(&m, [200, 100]),
+            (1680, 1080 - 48 - 100 - 60)
+        );
+        cfg.position = OverlayPosition::TopRight;
+        assert_eq!(cfg.overlay_origin_px(&m, [200, 100]), (1680, 60));
+    }
+
+    #[test]
+    fn manual_offsets_are_relative_to_the_monitor() {
+        let m = mon(1920, 0, 2560, 1440, 0, 1.25);
+        let mut cfg = placement_config(OverlayPosition::Manual);
+        cfg.overlay_x = 100.0;
+        cfg.overlay_y = 40.0;
+        assert_eq!(cfg.overlay_origin_px(&m, [200, 100]), (1920 + 125, 50));
+    }
+
+    #[test]
+    fn overlay_is_kept_on_the_monitor() {
+        let m = mon(1920, 0, 1920, 1080, 0, 1.0);
+        let mut cfg = placement_config(OverlayPosition::Manual);
+        cfg.overlay_x = 5000.0;
+        cfg.overlay_y = -300.0;
+        assert_eq!(
+            cfg.overlay_origin_px(&m, [200, 100]),
+            (1920 + 1920 - 200, 0)
+        );
+        // Huge margins cannot push a preset off-screen either.
+        let mut cfg = placement_config(OverlayPosition::TopLeft);
+        cfg.margin_x = 5000.0;
+        assert_eq!(cfg.overlay_origin_px(&m, [200, 100]).0, 1920 + 1920 - 200);
+    }
+
+    #[test]
+    fn manual_baseline_overrides_monitor_size_and_scale() {
+        let m = mon(1920, 0, 3840, 2160, 0, 2.0);
+        let mut cfg = placement_config(OverlayPosition::TopRight);
+        cfg.auto_display_baseline = false;
+        cfg.display_width_px = 1920.0;
+        cfg.display_height_px = 1080.0;
+        cfg.display_scale = 1.0;
+        assert_eq!(cfg.overlay_origin_px(&m, [200, 100]), (1920 + 1680, 60));
+        assert_eq!(cfg.monitor_size_points(&m), [1920.0, 1080.0]);
+    }
+
+    #[test]
+    fn monitor_size_points_uses_monitor_scale() {
+        let m = mon(0, 0, 2560, 1440, 0, 1.25);
+        let cfg = placement_config(OverlayPosition::Manual);
+        assert_eq!(cfg.monitor_size_points(&m), [2048.0, 1152.0]);
+    }
+
+    #[test]
+    fn manual_lower_right_on_respects_taskbar() {
+        let m = mon(0, 0, 1920, 1080, 40, 1.0);
+        let mut cfg = AppConfig {
+            overlay_width: 280.0,
+            overlay_height: 200.0,
+            margin_x: 40.0,
+            margin_y: 60.0,
+            avoid_taskbar: true,
+            ..AppConfig::default()
+        };
+        assert_eq!(cfg.manual_lower_right_on(&m), (1600.0, 780.0));
+        cfg.avoid_taskbar = false;
+        assert_eq!(cfg.manual_lower_right_on(&m), (1600.0, 820.0));
+    }
+
+    #[test]
+    fn monitor_target_round_trips_through_json() {
+        let cfg = AppConfig {
+            monitor: MonitorTarget::Display("\\\\.\\DISPLAY2".into()),
+            ..AppConfig::default()
+        };
+        let json = serde_json::to_string(&cfg).unwrap();
+        let back: AppConfig = serde_json::from_str(&json).unwrap();
+        assert_eq!(back.monitor, cfg.monitor);
+    }
+
+    #[test]
+    fn legacy_config_is_marked_for_migration() {
+        let restored: AppConfig = serde_json::from_str("{}").unwrap();
+        assert_eq!(restored.position_version, 0);
+        assert_eq!(restored.monitor, MonitorTarget::Primary);
+        assert!(restored.auto_display_baseline);
+        assert_eq!(AppConfig::default().position_version, POSITION_VERSION);
     }
 
     #[test]
