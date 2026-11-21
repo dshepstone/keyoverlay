@@ -1,4 +1,5 @@
 mod cursor_ring;
+mod monitors;
 mod mouse_icon;
 mod overlay_startup_diagnostics;
 mod settings_window;
@@ -16,7 +17,9 @@ use anyhow::Result;
 use cursor_ring::{ClickEvent, CursorRingController, CursorRingSettings};
 use eframe::egui;
 use eframe::epaint::Rgba;
-use keyoverlay_core::{AppConfig, OverlayPosition, SharedConfig};
+use keyoverlay_core::{
+    AppConfig, MonitorGeometry, MonitorTarget, OverlayPosition, SharedConfig, POSITION_VERSION,
+};
 use keyoverlay_input::{InputEvent, Key, MouseButton, ScrollDirection};
 use mouse_icon::{draw_mouse_icon, MouseHighlight, ScrollArrowDirection};
 use sound_engine::{SoundEngine, SoundSettings};
@@ -167,7 +170,9 @@ struct OverlayTrayState {
     pill_w: f32,
     pill_w_target: f32,
     tray_alpha: f32,
-    left_anchor: Option<egui::Pos2>,
+    /// Physical-pixel origin frozen while the overlay is showing, so the
+    /// tray grows from a fixed point instead of drifting.
+    left_anchor: Option<(i32, i32)>,
 }
 
 impl OverlayTrayState {
@@ -524,7 +529,6 @@ struct App {
     rx: Receiver<InputEvent>,
     input_state: InputState,
     tray_state: OverlayTrayState,
-    screen_size: [f32; 2],
     last_region_geometry: Option<OverlayGeometry>,
     last_hwnd: Option<OverlayHwnd>,
     transitions_disabled: bool,
@@ -539,7 +543,7 @@ struct App {
     title_logged: bool,
     viewport_config_logged: bool,
     last_overlay_visible: bool,
-    fixed_experiment_pos: Option<egui::Pos2>,
+    fixed_experiment_pos: Option<(i32, i32)>,
     first_show_done: bool,
     pending_region: Option<(i32, i32, i32)>,
     region_settle_deadline: Option<Instant>,
@@ -574,6 +578,17 @@ struct App {
     /// and sound engine; lets `update` skip the clone + lock + sync work on
     /// the (vast majority of) frames where nothing changed.
     last_synced_draft: Option<AppConfig>,
+    /// Connected monitors (refreshed periodically to catch hot-plugging).
+    monitors: Vec<monitors::MonitorInfo>,
+    monitors_refreshed_at: Instant,
+    /// Index into `monitors` the overlay is currently placed on.
+    active_monitor: usize,
+    /// True when the configured display is not connected and the overlay
+    /// fell back to the primary display.
+    monitor_fell_back: bool,
+    /// Physical pixels per point on the target monitor; overlay geometry is
+    /// computed at this scale so the window region matches the window.
+    overlay_px_scale: f32,
 }
 
 impl App {
@@ -590,17 +605,55 @@ impl App {
         draft.cursor_ring_opacity = draft.cursor_ring_opacity.clamp(0.2, 1.0);
     }
 
+    /// Convert settings written before multi-monitor support. Back then the
+    /// manual X/Y were points relative to the primary monitor, so a value
+    /// could point at another monitor; re-express it relative to whichever
+    /// monitor it lands on and select that monitor.
+    fn migrate_legacy_position(draft: &mut AppConfig, mons: &[monitors::MonitorInfo]) {
+        if draft.position_version >= POSITION_VERSION {
+            return;
+        }
+        draft.position_version = POSITION_VERSION;
+        if draft.position != OverlayPosition::Manual {
+            return;
+        }
+        let primary_scale = mons
+            .iter()
+            .find(|m| m.primary)
+            .map_or(1.0, |m| m.geometry.scale)
+            .max(0.5);
+        let px = (draft.overlay_x * primary_scale).round() as i32;
+        let py = (draft.overlay_y * primary_scale).round() as i32;
+        if let Some(mon) = mons.iter().find(|m| m.geometry.bounds.contains(px, py)) {
+            if !mon.primary {
+                let s = mon.geometry.scale.max(0.5);
+                draft.monitor = MonitorTarget::Display(mon.id.clone());
+                draft.overlay_x = (px - mon.geometry.bounds.x) as f32 / s;
+                draft.overlay_y = (py - mon.geometry.bounds.y) as f32 / s;
+            }
+        }
+    }
+
     fn new(rx: Receiver<InputEvent>, config: SharedConfig) -> Self {
         let mut draft = config.lock().unwrap().clone();
         Self::clamp_draft(&mut draft);
+        let mons = monitors::enumerate_monitors();
+        let migrated = draft.position_version < POSITION_VERSION;
+        Self::migrate_legacy_position(&mut draft, &mons);
+        let resolved =
+            monitors::resolve_target(&mons, &draft.monitor, monitors::cursor_position_px());
         if draft.position == OverlayPosition::Manual
             && (draft.overlay_x - 500.0).abs() < f32::EPSILON
             && (draft.overlay_y - 500.0).abs() < f32::EPSILON
         {
-            let (x, y) = draft.manual_lower_right_position();
+            let (x, y) = draft.manual_lower_right_on(&mons[resolved.index].geometry);
             draft.overlay_x = x;
             draft.overlay_y = y;
         }
+        if migrated {
+            *config.lock().unwrap() = draft.clone();
+        }
+        let overlay_px_scale = mons[resolved.index].geometry.scale.max(0.5);
 
         let cursor_ring_settings = CursorRingSettings::from_config(&draft);
         let sound_settings = SoundSettings::from_config(&draft);
@@ -613,7 +666,6 @@ impl App {
             rx,
             input_state: InputState::new(),
             tray_state: OverlayTrayState::new(),
-            screen_size: [1920.0, 1080.0],
             last_region_geometry: None,
             last_hwnd: None,
             transitions_disabled: false,
@@ -648,6 +700,11 @@ impl App {
             pending_save: false,
             last_apply_at: Instant::now(),
             last_synced_draft: None,
+            monitors: mons,
+            monitors_refreshed_at: Instant::now(),
+            active_monitor: resolved.index,
+            monitor_fell_back: resolved.fell_back,
+            overlay_px_scale,
         }
     }
 
@@ -680,7 +737,9 @@ impl App {
     }
 
     fn sync_manual_to_lower_right(&mut self) {
-        let (x, y) = self.draft.manual_lower_right_position();
+        let (x, y) = self
+            .draft
+            .manual_lower_right_on(&self.active_monitor_geometry());
         self.draft.overlay_x = x;
         self.draft.overlay_y = y;
     }
@@ -689,28 +748,62 @@ impl App {
         self.manual_preview_until = Some(Instant::now() + Duration::from_secs(2));
     }
 
-    fn compute_overlay_position(&self, win_size: [f32; 2], _screen: [f32; 2]) -> egui::Pos2 {
-        let cfg = &self.draft;
-        if cfg.position == OverlayPosition::Manual {
-            return egui::pos2(cfg.overlay_x, cfg.overlay_y);
-        }
+    /// Connected monitors, numbered left-to-right.
+    fn monitors(&self) -> &[monitors::MonitorInfo] {
+        &self.monitors
+    }
 
-        let [sw, sh] = cfg.scaled_display_size_points();
-        let w = win_size[0];
-        let h = win_size[1];
-        let mx = cfg.margin_x;
-        let my = cfg.margin_y;
+    fn active_monitor_info(&self) -> &monitors::MonitorInfo {
+        &self.monitors[self.active_monitor.min(self.monitors.len() - 1)]
+    }
 
-        match cfg.position {
-            OverlayPosition::BottomCenter => egui::pos2((sw - w) / 2.0, sh - h - my),
-            OverlayPosition::BottomLeft => egui::pos2(mx, sh - h - my),
-            OverlayPosition::BottomRight => egui::pos2(sw - w - mx, sh - h - my),
-            OverlayPosition::TopCenter => egui::pos2((sw - w) / 2.0, my),
-            OverlayPosition::TopLeft => egui::pos2(mx, my),
-            OverlayPosition::TopRight => egui::pos2(sw - w - mx, my),
-            OverlayPosition::Center => egui::pos2((sw - w) / 2.0, (sh - h) / 2.0),
-            OverlayPosition::Manual => egui::pos2(cfg.overlay_x, cfg.overlay_y),
+    fn active_monitor_geometry(&self) -> MonitorGeometry {
+        self.active_monitor_info().geometry
+    }
+
+    /// Re-enumerate monitors at most once a second so plugging/unplugging a
+    /// display or changing its resolution/scaling is picked up live.
+    fn refresh_monitors(&mut self, now: Instant, force: bool) {
+        if !force && now.duration_since(self.monitors_refreshed_at) < Duration::from_secs(1) {
+            return;
         }
+        self.monitors_refreshed_at = now;
+        let mons = monitors::enumerate_monitors();
+        if mons != self.monitors {
+            self.monitors = mons;
+            // Any frozen anchor may now be on a different/missing monitor.
+            self.tray_state.left_anchor = None;
+        }
+    }
+
+    /// Pick the monitor for the overlay. With "follow cursor" the monitor is
+    /// only re-chosen when the overlay is not already showing, so it never
+    /// jumps between screens mid-activation.
+    fn resolve_active_monitor(&mut self) {
+        if self.draft.monitor == MonitorTarget::FollowCursor
+            && self.tray_state.left_anchor.is_some()
+            && self.active_monitor < self.monitors.len()
+        {
+            return;
+        }
+        let cursor = if self.draft.monitor == MonitorTarget::FollowCursor {
+            monitors::cursor_position_px()
+        } else {
+            None
+        };
+        let resolved = monitors::resolve_target(&self.monitors, &self.draft.monitor, cursor);
+        if resolved.index != self.active_monitor {
+            self.tray_state.left_anchor = None;
+        }
+        self.active_monitor = resolved.index;
+        self.monitor_fell_back = resolved.fell_back;
+    }
+
+    /// Overlay top-left in physical virtual-desktop pixels for a window of
+    /// `win_px` physical pixels.
+    fn compute_overlay_position(&self, win_px: [i32; 2]) -> (i32, i32) {
+        self.draft
+            .overlay_origin_px(&self.active_monitor_geometry(), win_px)
     }
 
     fn measure_text(ctx: &egui::Context, text: &str, font_size: f32) -> egui::Vec2 {
@@ -916,7 +1009,9 @@ impl App {
         tokens: &[RenderToken],
         dt: f32,
     ) -> OverlayGeometry {
-        let px_scale: f32 = ctx.pixels_per_point();
+        // Use the target monitor's scale (not the settings window's) so the
+        // pixel sizes match the overlay window once it is on that monitor.
+        let px_scale: f32 = self.overlay_px_scale * ctx.zoom_factor();
         let overlay_scale = self.draft.overlay_scale.clamp(0.6, 2.0);
         let scaled_px = |value: i32| ((value as f32) * overlay_scale).round() as i32;
 
@@ -1345,9 +1440,6 @@ impl eframe::App for App {
                 }
             });
         }
-        if screen_rect.width() > 100.0 && screen_rect.height() > 100.0 {
-            self.screen_size = [screen_rect.width(), screen_rect.height()];
-        }
 
         settings_window::draw_settings(ctx, self);
         if self.active_tab != settings_window::SettingsTab::Position {
@@ -1430,14 +1522,29 @@ impl eframe::App for App {
             let fade_duration = Duration::from_secs_f32(self.draft.fade_duration_secs.max(0.0));
             self.input_state.tick(now, mouse_hold_for);
 
-            let render_tokens = self.build_render_tokens(now, dt);
+            self.refresh_monitors(now, false);
+            self.resolve_active_monitor();
+            self.overlay_px_scale = self.active_monitor_geometry().scale.max(0.5);
+
+            let mut render_tokens = self.build_render_tokens(now, dt);
             let mut overlay_visible =
                 !render_tokens.is_empty() || self.tray_state.tray_alpha > 0.01;
             if self.manual_preview_until.is_some_and(|until| now <= until)
                 && self.active_tab == settings_window::SettingsTab::Position
-                && self.draft.position == OverlayPosition::Manual
             {
                 overlay_visible = true;
+                if render_tokens.is_empty() {
+                    // Show which display the overlay is on while previewing.
+                    render_tokens.push(RenderToken {
+                        label: self.active_monitor_info().short_label(),
+                        is_mouse: false,
+                        mouse_highlight: MouseHighlight::None,
+                        alpha: 1.0,
+                        scale: 1.0,
+                        pulse: 0.0,
+                        font_size: self.draft.font_size,
+                    });
+                }
             }
             let scroll_arrow = self.input_state.scroll_arrow_for_display(
                 now,
@@ -1454,11 +1561,9 @@ impl eframe::App for App {
             let overlay_scale = self.draft.overlay_scale.clamp(0.6, 2.0);
             let geometry = self.build_overlay_geometry(ctx, &render_tokens, dt);
 
-            let computed_win_pos = self.compute_overlay_position(
-                [geometry.width_points, geometry.height_points],
-                self.screen_size,
-            );
-            let mut win_pos = if self.startup_experiment
+            let win_px = [geometry.width_px.max(1), geometry.height_px.max(1)];
+            let computed_win_pos = self.compute_overlay_position(win_px);
+            let mut win_pos_px = if self.startup_experiment
                 == overlay_startup_diagnostics::OverlayExperiment::NoAutoPosition
             {
                 if self.fixed_experiment_pos.is_none() {
@@ -1483,20 +1588,50 @@ impl eframe::App for App {
                 && self.draft.position == OverlayPosition::Manual
                 && (self.manual_slider_dragging || self.manual_slider_drag_ended);
 
+            let preview_active = self.manual_preview_until.is_some_and(|until| now <= until)
+                && self.active_tab == settings_window::SettingsTab::Position;
             if should_show_overlay {
-                if manual_live_reposition {
+                if manual_live_reposition || preview_active {
+                    // Track settings changes live while the user is
+                    // adjusting position on the Position tab.
                     self.tray_state.left_anchor = None;
                 } else {
                     if self.tray_state.left_anchor.is_none() {
-                        self.tray_state.left_anchor = Some(win_pos);
+                        self.tray_state.left_anchor = Some(win_pos_px);
                     }
                     if let Some(anchor) = self.tray_state.left_anchor {
-                        win_pos = anchor;
+                        // Keep the anchor, but never let a growing tray spill
+                        // onto the neighbouring monitor.
+                        let bounds = self
+                            .draft
+                            .placement_area(&self.active_monitor_geometry())
+                            .bounds;
+                        win_pos_px = bounds.clamp_box(anchor.0, anchor.1, win_px[0], win_px[1]);
                     }
                 }
             } else {
                 self.tray_state.left_anchor = None;
             }
+
+            // egui/winit position windows in logical points converted with
+            // the DPI of the monitor the window is *currently* on. Convert
+            // our physical target with that same scale. Before the window
+            // exists it is created on the primary monitor.
+            let current_window_scale = self
+                .last_hwnd
+                .and_then(monitors::window_scale)
+                .unwrap_or_else(|| {
+                    self.monitors()
+                        .iter()
+                        .find(|m| m.primary)
+                        .map_or(1.0, |m| m.geometry.scale)
+                })
+                .max(0.5)
+                * ctx.zoom_factor();
+            let win_pos = egui::pos2(
+                win_pos_px.0 as f32 / current_window_scale,
+                win_pos_px.1 as f32 / current_window_scale,
+            );
 
             if self.startup_experiment
                 == overlay_startup_diagnostics::OverlayExperiment::EarlyDwmDisable
@@ -1562,6 +1697,18 @@ impl eframe::App for App {
                 } else {
                     true
                 };
+                // Moving between monitors with different DPI can leave the
+                // window off by the scale ratio (Windows rescales it mid-move),
+                // so verify the real physical position and correct it.
+                if !move_changed && allow_live_move {
+                    if let Some(hwnd) = self.last_hwnd {
+                        if let Some((ax, ay)) = monitors::window_origin_px(hwnd) {
+                            if (ax - win_pos_px.0).abs() > 1 || (ay - win_pos_px.1).abs() > 1 {
+                                monitors::move_window_px(hwnd, win_pos_px.0, win_pos_px.1);
+                            }
+                        }
+                    }
+                }
                 if move_changed && allow_live_move {
                     ctx.send_viewport_cmd_to(
                         overlay_id,
@@ -1894,6 +2041,7 @@ mod tests {
 
     fn base_config() -> AppConfig {
         AppConfig {
+            avoid_taskbar: false,
             display_width_px: 1920.0,
             display_height_px: 1080.0,
             display_scale: 1.0,
@@ -1903,74 +2051,96 @@ mod tests {
         }
     }
 
-    fn pos_for(position: OverlayPosition, cfg: AppConfig) -> egui::Pos2 {
+    fn pos_for(position: OverlayPosition, cfg: AppConfig) -> (i32, i32) {
         let mut app = test_app(cfg);
+        // Non-Windows test builds see a single 1920x1080 @ 100% monitor.
         app.draft.position = position;
-        app.compute_overlay_position([200.0, 100.0], [1920.0, 1080.0])
+        app.compute_overlay_position([200, 100])
     }
 
     #[test]
     fn overlay_anchoring_all_presets() {
         let cfg = base_config();
-        assert_eq!(
-            pos_for(OverlayPosition::TopLeft, cfg.clone()),
-            egui::pos2(40.0, 60.0)
-        );
-        assert_eq!(
-            pos_for(OverlayPosition::TopRight, cfg.clone()),
-            egui::pos2(1680.0, 60.0)
-        );
-        assert_eq!(
-            pos_for(OverlayPosition::TopCenter, cfg.clone()),
-            egui::pos2(860.0, 60.0)
-        );
-        assert_eq!(
-            pos_for(OverlayPosition::BottomLeft, cfg.clone()),
-            egui::pos2(40.0, 920.0)
-        );
+        assert_eq!(pos_for(OverlayPosition::TopLeft, cfg.clone()), (40, 60));
+        assert_eq!(pos_for(OverlayPosition::TopRight, cfg.clone()), (1680, 60));
+        assert_eq!(pos_for(OverlayPosition::TopCenter, cfg.clone()), (860, 60));
+        assert_eq!(pos_for(OverlayPosition::BottomLeft, cfg.clone()), (40, 920));
         assert_eq!(
             pos_for(OverlayPosition::BottomRight, cfg.clone()),
-            egui::pos2(1680.0, 920.0)
+            (1680, 920)
         );
         assert_eq!(
             pos_for(OverlayPosition::BottomCenter, cfg.clone()),
-            egui::pos2(860.0, 920.0)
+            (860, 920)
         );
-        assert_eq!(
-            pos_for(OverlayPosition::Center, cfg),
-            egui::pos2(860.0, 490.0)
-        );
+        assert_eq!(pos_for(OverlayPosition::Center, cfg), (860, 490));
     }
 
     #[test]
-    fn overlay_anchoring_respects_display_scale() {
-        // At 125% scaling the logical desktop is 1536x864 points.
+    fn manual_baseline_scale_applies_when_auto_detect_is_off() {
+        // A manual 125% baseline: margins are points, so 40pt -> 50px.
         let cfg = AppConfig {
+            auto_display_baseline: false,
             display_scale: 1.25,
             ..base_config()
         };
         assert_eq!(
-            pos_for(OverlayPosition::TopRight, cfg.clone()),
-            egui::pos2(1536.0 - 200.0 - 40.0, 60.0)
-        );
-        assert_eq!(
-            pos_for(OverlayPosition::BottomRight, cfg),
-            egui::pos2(1296.0, 864.0 - 100.0 - 60.0)
+            pos_for(OverlayPosition::TopRight, cfg),
+            (1920 - 200 - 50, 75)
         );
     }
 
     #[test]
-    fn manual_position_allows_negative_coordinates() {
-        // Monitors left of or above the primary produce negative coordinates.
+    fn manual_position_is_clamped_to_the_monitor() {
         let cfg = AppConfig {
             overlay_x: -500.0,
             overlay_y: -250.0,
             ..base_config()
         };
-        assert_eq!(
-            pos_for(OverlayPosition::Manual, cfg),
-            egui::pos2(-500.0, -250.0)
-        );
+        assert_eq!(pos_for(OverlayPosition::Manual, cfg), (0, 0));
+    }
+
+    #[test]
+    fn legacy_manual_position_moves_to_the_monitor_it_was_on() {
+        use keyoverlay_core::PxRect;
+        let mons = vec![
+            monitors::MonitorInfo {
+                id: "P".into(),
+                number: 1,
+                primary: true,
+                geometry: MonitorGeometry {
+                    bounds: PxRect::new(0, 0, 1920, 1080),
+                    work: PxRect::new(0, 0, 1920, 1040),
+                    scale: 1.0,
+                },
+            },
+            monitors::MonitorInfo {
+                id: "S".into(),
+                number: 2,
+                primary: false,
+                geometry: MonitorGeometry {
+                    bounds: PxRect::new(1920, 0, 2560, 1440),
+                    work: PxRect::new(1920, 0, 2560, 1440),
+                    scale: 2.0,
+                },
+            },
+        ];
+        let mut cfg = AppConfig {
+            position: OverlayPosition::Manual,
+            overlay_x: 2120.0,
+            overlay_y: 100.0,
+            position_version: 0,
+            ..AppConfig::default()
+        };
+        App::migrate_legacy_position(&mut cfg, &mons);
+        assert_eq!(cfg.monitor, MonitorTarget::Display("S".into()));
+        assert_eq!((cfg.overlay_x, cfg.overlay_y), (100.0, 50.0));
+        assert_eq!(cfg.position_version, POSITION_VERSION);
+
+        // Already-migrated configs are left alone.
+        let before = cfg.clone();
+        App::migrate_legacy_position(&mut cfg, &mons);
+        assert_eq!(cfg, before);
     }
 
     #[test]
